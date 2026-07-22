@@ -442,6 +442,7 @@ export const defaultCronTaskI18nEn: Required<CronTaskI18n> = {
     schedule: 'Schedule',
     runLog: 'Run Logs',
     noRunLog: 'No run logs yet',
+    noMore: 'No more logs',
     viewSession: 'View session',
     unread: 'Unread',
     executionRecordTitle: 'Execution Records',

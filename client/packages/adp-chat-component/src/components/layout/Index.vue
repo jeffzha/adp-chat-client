@@ -10,6 +10,7 @@ import FilePreviewLayout from './FilePreviewLayout.vue';
 import LogoArea from '../LogoArea.vue';
 import CustomizedIcon from '../CustomizedIcon.vue';
 import CronTask from '../CronTask/CronTask.vue';
+import CronTaskExecutionSidebar from '../CronTask/CronTaskExecutionSidebar.vue';
 import ChannelConversationPanel from '../Channel/ChannelConversationPanel.vue';
 import type { Application, AppPattern } from '../../model/application';
 import type { ChatConversation, Record, Reference, SseEvent, Content, ErrorEvent } from '../../model/chat-v2';
@@ -116,6 +117,18 @@ export interface Props extends ThemeProps, OverlayProps {
      *   - 置 false / 未传：按普通会话流程（本地 /chat/conversations 命中 + InfiniteLoading /chat/messages）
      */
     currentConversationChannel?: boolean;
+    /** 当前会话是否来自定时任务执行记录（cron task 产生的 channel 型会话）。
+     *    同 currentConversationChannel 机制：URL 携带会话 ID + 此标记时，绕过本地列表匹配，
+     *    直接注册为渠道会话 + DescribeConversationMessageList 拉首屏历史。
+     *    配合父组件的 URL 格式如 /:appId/timertask/:convId 使用，刷新页面后能正确还原。
+     */
+    currentConversationCronTask?: boolean;
+    /**
+     * 当前定时任务会话对应的触发器 ID（URL 携带的 triggerId，如 query 参数）。
+     * 刷新页面后用于自动定位到该触发器的详情面板（右侧 sidebar）。
+     * 通常来源：父应用 URL `/:appId/timertask/:convId?triggerId=xxx` 中解析。
+     */
+    currentConversationCronTaskTriggerId?: string;
     /** 聊天消息列表 */
     chatList?: Record[];
     /** 是否正在聊天中 */
@@ -156,9 +169,9 @@ export interface Props extends ThemeProps, OverlayProps {
     skillsApplicationId?: string;
     /** 定时任务国际化文本 */
     cronTaskI18n?: Partial<CronTaskI18n>;
-    /** 定时任务：模型选项 */
+    /** @deprecated AppTrigger 不再需要模型/文件夹选项，保留以兼容 */
     cronTaskModelOptions?: Array<{ label: string; value: string }>;
-    /** 定时任务：关联文件夹选项 */
+    /** @deprecated AppTrigger 不再需要模型/文件夹选项，保留以兼容 */
     cronTaskFolderOptions?: Array<{ label: string; value: string }>;
     /** 定时任务：列表分页大小 */
     cronTaskPageSize?: number;
@@ -245,12 +258,14 @@ const emit = defineEmits<{
     (e: 'widgetEvent', event: CustomEvent, widgetRunId: string, widgetId: string, recordId: string): void;
     /** 定时任务面板可见性变化 */
     (e: 'cronTaskVisibleChange', visible: boolean): void;
+    /** 定时任务：再次点击入口重置为初始 list 视图，请求外层清空 timertask 相关 URL 段（保留会话 id） */
+    (e: 'cronTaskResetUrl'): void;
     /** 定时任务：立即执行并查看 */
     (e: 'cronTaskRunAndView', task: TimerTask | TimerTaskSummary): void;
     /** 渠道：展开/收起渠道会话列表 */
     (e: 'toggleChannelList'): void;
-    /** 定时任务：切换到聊天窗口（携带任务 & 会话 / 日志 Id） */
-    (e: 'cronTaskSwitchToChat', payload: { task: TimerTask | TimerTaskSummary; sessionId?: string; logId?: string }): void;
+    /** 定时任务：切换到聊天窗口（携带任务 & 会话 / 日志 Id / 触发器 Id） */
+    (e: 'cronTaskSwitchToChat', payload: { task: TimerTask | TimerTaskSummary; triggerId?: string; sessionId?: string; logId?: string; userId?: string }): void;
     /** 定时任务：某个操作完成（新增/编辑/删除/暂停/恢复/立即执行等） */
     (e: 'cronTaskActionDone', action: string, task: TimerTask | TimerTaskSummary): void;
     /** 定时任务：优化 Prompt */
@@ -270,6 +285,17 @@ const filePreviewVisible = ref(false);
 
 // 定时任务面板显示状态（覆盖会话窗口）
 const cronTaskVisible = ref(false);
+// 定时任务侧边栏模式：正在查看定时任务会话时，右侧面板与聊天并存
+const cronTaskSidebarActiveConvId = ref('');
+const cronTaskSidebarMode = computed(() =>
+    cronTaskVisible.value && !!cronTaskSidebarActiveConvId.value
+);
+/** sidebar 模式下当前定位的任务（用于渲染执行历史 sidebar） */
+const cronTaskSidebarTask = ref<TimerTask | TimerTaskSummary | null>(null);
+/** sidebar 模式下当前激活的执行记录 InstanceId（列表高亮） */
+const cronTaskSidebarActiveLogId = ref('');
+/** CronTask 组件引用（暴露 showTaskDetail / refreshList） */
+const cronTaskRef = ref<InstanceType<typeof CronTask> | null>(null);
 /** 渠道会话列表抽屉可见性 */
 const channelDrawerVisible = ref(false);
 
@@ -282,6 +308,9 @@ const openCronTask = () => {
     // 打开定时任务面板时，清除远程终端（渠道）选中态与历史对话列表选中态，避免多个选中态并存
     clearChannelSelection();
     clearConversationSelection();
+    cronTaskSidebarActiveConvId.value = '';   // 从入口打开 → 全屏模式
+    cronTaskSidebarTask.value = null;
+    cronTaskSidebarActiveLogId.value = '';
     cronTaskVisible.value = true;
     filePreviewVisible.value = false;
     emit('cronTaskVisibleChange', true);
@@ -293,7 +322,37 @@ const openCronTask = () => {
 const closeCronTask = () => {
     if (!cronTaskVisible.value) return;
     cronTaskVisible.value = false;
+    cronTaskSidebarActiveConvId.value = '';
+    cronTaskSidebarTask.value = null;
+    cronTaskSidebarActiveLogId.value = '';
     emit('cronTaskVisibleChange', false);
+};
+
+/**
+ * Header 定时任务图标点击：
+ * - 当前正在浏览定时任务会话（currentConversationCronTask 或 sidebar 已激活）：仅切换右侧 sidebar 显隐
+ * - 否则走全屏 openCronTask
+ */
+const handleCronTaskHeaderIconClick = () => {
+    const inCronTaskConversation = props.currentConversationCronTask
+        || !!cronTaskSidebarActiveConvId.value;
+    if (inCronTaskConversation) {
+        // 切换右侧 sidebar 显隐（保持当前会话 & sidebar 关联 convId 不动）
+        if (cronTaskVisible.value) {
+            cronTaskVisible.value = false;
+            emit('cronTaskVisibleChange', false);
+        } else {
+            // 若 sidebar convId 丢失（例如页面初次进入），用当前会话 id 兜底
+            if (!cronTaskSidebarActiveConvId.value) {
+                cronTaskSidebarActiveConvId.value = props.currentConversationId || currentConversationStateKey.value;
+            }
+            cronTaskVisible.value = true;
+            filePreviewVisible.value = false;
+            emit('cronTaskVisibleChange', true);
+        }
+        return;
+    }
+    openCronTask();
 };
 
 /**
@@ -651,9 +710,14 @@ const actualApplications = computed(() =>
 const actualConversations = computed(() => 
     props.conversations.length > 0 ? props.conversations : internalConversations.value
 );
-const actualChatList = computed(() => 
-    props.chatList.length > 0 ? props.chatList : getConversationRecords(currentConversationStateKey.value)
-);
+const actualChatList = computed(() => {
+    // 渠道 / 定时任务会话：消息来源是内部 DescribeConversationMessageList 拉取，
+    // 不在本地库也不通过 /chat/messages，必须用内部 records，不能回退到 props.chatList
+    if (currentConversationStateKey.value && channelConversationUserId.value[currentConversationStateKey.value]) {
+        return getConversationRecords(currentConversationStateKey.value);
+    }
+    return props.chatList.length > 0 ? props.chatList : getConversationRecords(currentConversationStateKey.value);
+});
 const actualUser = computed(() => 
     (props.user && Object.keys(props.user).length > 0) ? props.user : internalUser.value
 );
@@ -1220,7 +1284,21 @@ const handleInternalLoadMore = async (conversationId: string, lastRecordId: stri
                 console.warn('[handleInternalLoadMore] 等待渠道恢复出错:', err);
             }
         }
-        // 无论 restore 结果如何，URL 标记为渠道的 conv 都不应触发 /chat/messages
+    // 无论 restore 结果如何，URL 标记为渠道的 conv 都不应触发 /chat/messages
+        mainLayoutRef.value?.notifyComplete();
+        return;
+    }
+
+    // 【URL 刷新场景】定时任务会话（props.currentConversationCronTask=true）：同渠道逻辑
+    if (
+        useApiMode.value
+        && props.currentConversationCronTask
+        && props.currentConversationId === conversationId
+    ) {
+        // 确保已注册为渠道会话，后续首屏历史由 restore 或 handleCronTaskSwitchToChat 的缓存补充
+        if (!channelConversationUserId.value[conversationId]) {
+            channelConversationUserId.value[conversationId] = 'anonymous';
+        }
         mainLayoutRef.value?.notifyComplete();
         return;
     }
@@ -1463,9 +1541,11 @@ const handleSelectConversation = async (conversation: ChatConversation, fromChan
             clearChannelSelection();
         }
     }
-    // 切换会话时关闭文件预览面板 & 定时任务面板
+    // 切换会话时关闭文件预览面板；仅非渠道/定时任务场景才关闭 CronTask
     closeFilePreview();
-    closeCronTask();
+    if (!fromChannel) {
+        closeCronTask();
+    }
     // 移动端选择对话后收起侧边栏
     if (isMobile.value) {
         sidebarVisible.value = false;
@@ -1485,10 +1565,71 @@ const handleCreateConversation = () => {
 };
 
 /**
- * 定时任务面板 → 切回聊天：关闭覆盖层，透传给外部
+ * 定时任务面板 → 切回聊天（webim 风格：运行记录侧边栏 + 对话区并存）
+ * 内部完成「选中会话 + 拉取 DescribeConversationMessageList 历史 + 渲染」全链路
  */
-const handleCronTaskSwitchToChat = (payload: { task: TimerTask | TimerTaskSummary; sessionId?: string; logId?: string }) => {
-    closeCronTask();
+const handleCronTaskSwitchToChat = async (payload: { task: TimerTask | TimerTaskSummary; triggerId?: string; sessionId?: string; logId?: string; userId?: string }) => {
+    const conversationId = payload.sessionId || '';
+    if (!conversationId || currentConversationStateKey.value === conversationId) return;
+
+    const appId = currentApplicationId.value || internalCurrentApplication.value?.ApplicationId || '';
+    const userId = payload.userId || 'anonymous';
+
+    // 1. 注册为渠道会话，后续 handleInternalLoadMore 会走 CAPI 历史加载
+    channelConversationUserId.value[conversationId] = userId;
+    channelRestoreAttempted.add(conversationId);
+
+    // 2. 构造 stub 并选中
+    const stub: ChatConversation = {
+        Id: conversationId,
+        ApplicationId: appId,
+    } as ChatConversation;
+    internalCurrentConversation.value = stub;
+    currentConversationStateKey.value = conversationId;
+    setConversationApplicationId(conversationId, appId);
+    clearChannelSelection();
+    // 清空旧 chatList，强制走 getConversationRecords 内部源
+    emit('selectConversation', stub, true);
+
+    // 3. 主动拉首屏历史
+    try {
+        const resp = await fetchConversationDetailV2(
+            {
+                ConversationId: conversationId,
+                Limit: 50,
+                Type: 5,
+                UserId: userId,
+                RecordQueryDirection: 1,
+            },
+            appId,
+            mergedApiDetailConfig.value.describeConversationMessageListApi,
+        );
+        const data = resp?.Response || ({} as NonNullable<typeof resp>['Response']);
+        const records: Record[] = (data.Records && data.Records.length)
+            ? data.Records
+            : groupChannelMessagesToRecords((data.Messages as any[]) || [], conversationId);
+        records.forEach((r) => { (r as any)._isChannelHistory = true; });
+        if (records.length > 0) {
+            await hydrateReferences(records, { applicationId: appId });
+        }
+        setConversationRecords(conversationId, records, appId);
+        nextTick(() => {
+            mainLayoutRef.value?.getChatRef()?.backToBottom();
+        });
+    } catch (e) {
+        console.error('[CronTaskSwitchToChat] load history failed:', e);
+        MessagePlugin.warning(mergedChatI18n.value.loadMoreFailed);
+    }
+
+    // 4. 进入侧边栏模式：聊天在左，定时任务执行记录在右（企微机器人 style）
+    cronTaskSidebarActiveConvId.value = conversationId;
+    cronTaskSidebarTask.value = payload.task || cronTaskSidebarTask.value;
+    cronTaskSidebarActiveLogId.value = payload.logId || '';
+    if (!cronTaskVisible.value) {
+        cronTaskVisible.value = true;
+    }
+
+    // 5. 透传事件（兼容已有监听方，如需要 URL 同步由外部处理）
     emit('cronTaskSwitchToChat', payload);
 };
 
@@ -1533,7 +1674,19 @@ const handleSideAction = (key: string) => {
         handleCreateConversation();
     }
     if (key === 'cron-task') {
-        openCronTask();
+        // 再次点击"定时任务"入口：
+        // - 若面板未打开：正常打开
+        // - 若已打开（可能停留在 detail 或 sidebar 模式）：重置为初始 list 视图，
+        //   清空 sidebar 关联状态，并请求外层清空 timertask 相关 URL 段
+        if (cronTaskVisible.value) {
+            cronTaskRef.value?.resetToList?.();
+            cronTaskSidebarActiveConvId.value = '';
+            cronTaskSidebarTask.value = null;
+            cronTaskSidebarActiveLogId.value = '';
+            emit('cronTaskResetUrl');
+        } else {
+            openCronTask();
+        }
     }
     if (key === 'channel-list') {
         channelDrawerVisible.value = !channelDrawerVisible.value;
@@ -2287,10 +2440,11 @@ watch(
         () => props.currentApplicationId,
         () => props.currentConversationId,
         () => props.currentConversationChannel,
+        () => props.currentConversationCronTask,
         () => actualApplications.value,
         () => actualConversations.value
     ],
-    async ([appId, convId, isChannel, apps, conversations]) => {
+    async ([appId, convId, isChannel, isCronTask, apps, conversations]) => {
         // 处理应用 ID 变化
         if (appId && apps.length > 0) {
             const foundApp = apps.find(app => app.ApplicationId === appId);
@@ -2347,6 +2501,79 @@ watch(
         ) {
             channelRestoreAttempted.add(convId);
             void restoreChannelConversationById(convId, appId);
+        }
+
+        // 【URL 刷新场景】定时任务会话恢复（同 channel 机制，简化：无需反查渠道列表）
+        if (
+            useApiMode.value
+            && isCronTask
+            && convId
+            && appId
+            && currentConversationStateKey.value !== convId
+            && !channelRestoreAttempted.has(convId)
+        ) {
+            channelRestoreAttempted.add(convId);
+            channelConversationUserId.value[convId] = channelConversationUserId.value[convId] || 'anonymous';
+            const stub: ChatConversation = {
+                Id: convId,
+                ApplicationId: appId,
+            } as ChatConversation;
+            internalCurrentConversation.value = stub;
+            currentConversationStateKey.value = convId;
+            setConversationApplicationId(convId, appId);
+            clearChannelSelection();
+            // 主动拉首屏历史
+            void (async () => {
+                try {
+                    const resp = await fetchConversationDetailV2(
+                        {
+                            ConversationId: convId,
+                            Limit: 50,
+                            Type: 5,
+                            UserId: channelConversationUserId.value[convId],
+                            RecordQueryDirection: 1,
+                        },
+                        appId,
+                        mergedApiDetailConfig.value.describeConversationMessageListApi,
+                    );
+                    const data = resp?.Response || ({} as NonNullable<typeof resp>['Response']);
+                    const records: Record[] = (data.Records && data.Records.length)
+                        ? data.Records
+                        : groupChannelMessagesToRecords((data.Messages as any[]) || [], convId);
+                    records.forEach((r) => { (r as any)._isChannelHistory = true; });
+                    if (records.length > 0) {
+                        await hydrateReferences(records, { applicationId: appId });
+                    }
+                    setConversationRecords(convId, records, appId);
+                    nextTick(() => {
+                        mainLayoutRef.value?.getChatRef()?.backToBottom();
+                    });
+                } catch (e) {
+                    console.error('[CronTaskWatch] restore failed:', e);
+                }
+            })();
+
+            // URL 刷新场景：自动进入右侧 sidebar 模式（对齐企微机器人体验）
+            // 若 URL 携带了 triggerId，nextTick 后定位到该触发器详情
+            if (props.enableCronTask) {
+                cronTaskSidebarActiveConvId.value = convId;
+                if (!cronTaskVisible.value) {
+                    cronTaskVisible.value = true;
+                    filePreviewVisible.value = false;
+                    emit('cronTaskVisibleChange', true);
+                }
+                const triggerId = props.currentConversationCronTaskTriggerId;
+                if (triggerId) {
+                    nextTick(() => {
+                        // stub task 供 CronTaskDetail 触发 watch → fetchTaskDetail/fetchRunLogs 拉取详情&记录
+                        // getEntityId 会依次读 TriggerId → timer_id/TimerId，两者都塞上保证兼容 AppTrigger + 旧 TimerTask
+                        cronTaskRef.value?.showTaskDetail({
+                            TriggerId: triggerId,
+                            TimerId: triggerId,
+                        } as any);
+                    });
+                }
+            }
         }
 
         // 更新上一次的值
@@ -2478,9 +2705,10 @@ defineExpose({
                     </slot>
                 </template>
             </SideLayout>
-            <div class="main-area">
+            <div class="main-area" :class="{ 'main-area--sidebar': cronTaskSidebarMode }">
             <MainLayout
-                v-show="!cronTaskVisible"
+                v-show="!cronTaskVisible || cronTaskSidebarMode"
+                class="main-area__chat"
                 ref="mainLayoutRef"
                 :currentApplicationAvatar="currentApplicationAvatar"
                 :currentApplicationName="currentApplicationName"
@@ -2539,7 +2767,7 @@ defineExpose({
                         <span
                             class="header-action-btn"
                             :class="{ 'header-action-btn--active': cronTaskVisible }"
-                            @click="openCronTask"
+                            @click="handleCronTaskHeaderIconClick"
                         >
                             <CustomizedIcon remote name="basic_time_line" :theme="theme" />
                         </span>
@@ -2563,15 +2791,14 @@ defineExpose({
             </MainLayout>
             <CronTask
                 v-if="enableCronTask && chatMode === 'claw'"
-                v-show="cronTaskVisible"
+                v-show="cronTaskVisible && !cronTaskSidebarMode"
+                ref="cronTaskRef"
                 class="cron-task-overlay"
                 :application-id="currentApplicationId"
                 :space-id="resolvedSpaceId"
                 :theme="theme"
                 :language="props.language"
                 :i18n="cronTaskI18n"
-                :model-options="cronTaskModelOptions"
-                :folder-options="cronTaskFolderOptions"
                 :page-size="cronTaskPageSize"
                 :poll-interval="cronTaskPollInterval"
                 @run-and-view="(task: TimerTask | TimerTaskSummary) => emit('cronTaskRunAndView', task)"
@@ -2579,6 +2806,21 @@ defineExpose({
                 @refresh="() => { /* 交由内部处理 */ }"
                 @switch-to-chat="handleCronTaskSwitchToChat"
                 @action-done="(action: string, task: TimerTask | TimerTaskSummary) => emit('cronTaskActionDone', action, task)"
+            />
+            <!-- 定时任务执行历史 sidebar：仅在 sidebar 模式下渲染，样式对齐 ChannelConversationPanel -->
+            <CronTaskExecutionSidebar
+                v-if="enableCronTask && cronTaskSidebarMode"
+                :visible="cronTaskSidebarMode"
+                :task="cronTaskSidebarTask"
+                :application-id="currentApplicationId"
+                :language="props.language"
+                :i18n="cronTaskI18n"
+                :active-log-id="cronTaskSidebarActiveLogId"
+                :page-size="cronTaskPageSize"
+                :poll-interval="cronTaskPollInterval"
+                :theme="theme"
+                @select-log="handleCronTaskSwitchToChat"
+                @close="closeCronTask"
             />
             </div>
             <!-- 渠道会话列表面板：作为 .content 的 flex 子项，从右侧推开（对齐 FilePreviewLayout 的位置） -->
@@ -2675,7 +2917,9 @@ defineExpose({
     background: var(--td-bg-color-container-active);
 }
 
-/* 主区容器：让 MainLayout 与 CronTask 覆盖层共享同一区域 */
+/* 主区容器：让 MainLayout 与 CronTask 覆盖层共享同一区域
+ * 默认 column（overlay 模式下 CronTask 绝对定位覆盖 MainLayout）
+ * sidebar 模式切成 row：MainLayout 与 CronTask 横向并列 */
 .main-area {
     flex: 1;
     min-width: 0;
@@ -2685,7 +2929,16 @@ defineExpose({
     position: relative;
     overflow: hidden;
 }
-/* 定时任务覆盖层：填充主区，覆盖会话窗口 */
+.main-area--sidebar {
+    flex-direction: row;
+}
+/* sidebar 模式下聊天区占满剩余空间 */
+.main-area--sidebar .main-area__chat {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+}
+/* 定时任务覆盖层：填充主区，覆盖会话窗口（从左侧入口/新窗口打开） */
 .cron-task-overlay {
     position: absolute;
     inset: 0;

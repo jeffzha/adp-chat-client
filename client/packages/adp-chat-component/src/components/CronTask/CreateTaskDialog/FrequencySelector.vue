@@ -668,7 +668,7 @@ defineExpose({ validate, getFormData, setFormData, resetForm });
 }
 
 .cron-frequency-selector__required {
-    color: var(--td-error-color, #e54545);
+    color: var(--td-error-color);
     margin-left: var(--td-size-1);
 }
 
@@ -722,11 +722,11 @@ defineExpose({ validate, getFormData, setFormData, resetForm });
 }
 
 .cron-frequency-selector__cron-hint--desc {
-    color: var(--td-brand-color, #0052d9);
+    color: var(--td-brand-color);
 }
 
 .cron-frequency-selector__cron-hint--error {
-    color: var(--td-error-color, #e54545);
+    color: var(--td-error-color);
     font-size: var(--td-font-size-body-small);
     line-height: var(--td-line-height-body-small);
 }

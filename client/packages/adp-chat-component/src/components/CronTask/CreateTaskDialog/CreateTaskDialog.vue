@@ -29,13 +29,8 @@
                     ref="promptInputRef"
                     v-model="promptValue"
                     :max-length="10000"
-                    :disable-folder="isEdit"
                     :language="language"
                     :i18n="i18n"
-                    :model-options="modelOptions"
-                    :folder-options="folderOptions"
-                    @model-change="handleModelChange"
-                    @folder-change="handleFolderChange"
                 />
             </div>
 
@@ -94,22 +89,29 @@ import FrequencySelector from './FrequencySelector.vue';
 import PushChannel from './PushChannel.vue';
 import type { CronTaskI18n, TimerTask, TimerTaskSummary } from '../../../model/cronTask';
 import {
-    TimerCreateSource,
     TimerScheduleType,
     TimerPushChannel,
     getCronTaskI18nByLanguage,
 } from '../../../model/cronTask';
+import { AppTriggerScope } from '../../../model/appTrigger';
 import {
-    createTimerTask,
-    modifyTimerTask,
-    describeTimerTask,
-} from '../../../service/cronTaskApi';
+    createAppTrigger,
+    modifyAppTrigger,
+    describeAppTrigger,
+} from '../../../service/appTriggerApi';
+import type { CreateAppTriggerPayload, ModifyAppTriggerPayload } from '../../../service/appTriggerApi';
 import { getTimerId } from '../../../utils/cronTask';
-// Props / Option 抽到独立 .ts 文件里定义，避免 vite-plugin-dts 在处理
-// SFC 时对多个 `export interface` 误报 TS4082「private name」。
-// 此处 re-export 以便消费方仍能 `import { Props, Option } from '.../CreateTaskDialog.vue'`。
-import type { Props, Option } from './types';
-export type { Props, Option };
+import { getTriggerId } from '../../../utils/appTrigger';
+
+interface Props {
+    visible: boolean;
+    editingTask?: TimerTaskSummary | TimerTask | null;
+    applicationId: string;
+    /** @deprecated AppTrigger 不再需要 spaceId */
+    spaceId?: string;
+    language?: string;
+    i18n?: Partial<CronTaskI18n>;
+}
 
 const props = withDefaults(defineProps<Props>(), {
     visible: false,
@@ -117,8 +119,6 @@ const props = withDefaults(defineProps<Props>(), {
     spaceId: '',
     language: 'zh-CN',
     i18n: () => ({}),
-    modelOptions: () => [],
-    folderOptions: () => [],
 });
 
 const emit = defineEmits<{
@@ -145,8 +145,6 @@ const innerVisible = computed({
 
 const taskName = ref('');
 const promptValue = ref('');
-const selectedModel = ref<string>('');
-const selectedFolder = ref<string>('');
 const confirmLoading = ref(false);
 const detailLoading = ref(false);
 
@@ -157,14 +155,6 @@ const pushChannelRef = ref<InstanceType<typeof PushChannel> | null>(null);
 // ============================================================
 // 交互
 // ============================================================
-function handleModelChange(model: string) {
-    selectedModel.value = model;
-}
-
-function handleFolderChange(folder: string) {
-    selectedFolder.value = folder;
-}
-
 function scrollBodyToBottom() {
     nextTick(() => {
         const body = document.querySelector('.cron-create-task-dialog__body');
@@ -293,52 +283,48 @@ async function handleConfirm() {
     const freqData = frequencySelectorRef.value.getFormData();
     const pushData = pushChannelRef.value.getFormData();
 
-    const profile: Record<string, any> = {
-        TaskName: taskName.value.trim(),
-        PromptContent: promptData.prompt,
-        CreateSource: TimerCreateSource.MANUAL,
-        ModelName: promptData.modelId || '',
-        ConversationId: promptData.workspaceId || '',
-    };
-    const config: Record<string, any> = {
-        Schedule: _buildSchedule(freqData),
-        Push: _buildPushConfig(pushData),
-    };
-
     confirmLoading.value = true;
     try {
         if (isEdit.value) {
-            const timerId = getTimerId(props.editingTask || {});
-            if (!timerId) throw new Error('missing timer id');
-            await modifyTimerTask(
-                {
-                    SpaceId: props.spaceId,
-                    TimerId: timerId,
-                    Profile: profile,
-                    Config: config,
-                    UpdateMask: {
-                        Paths: [
-                            'profile.task_name',
-                            'profile.prompt_content',
-                            'profile.model_name',
-                            'profile.conversation_id',
-                            'config.schedule',
-                            'config.push',
-                        ],
-                    },
+            // —— 编辑：调 ModifyAppTrigger ——
+            const triggerId = getTriggerId(props.editingTask || {}) || getTimerId(props.editingTask || {});
+            if (!triggerId) throw new Error('missing trigger id');
+
+            const updateMask: ModifyAppTriggerPayload = {
+                TriggerId: triggerId,
+                Scope: AppTriggerScope.APP,
+                Trigger: {
+                    TriggerName: taskName.value.trim(),
+                    TriggerConfig: { ScheduledConfig: { Schedule: _buildSchedule(freqData) } },
+                    ExecuteConfig: { PromptConfig: { ExecutePrompt: promptData.ExecutePrompt } },
+                    PushConfig: _buildPushConfig(pushData),
                 },
-                props.applicationId,
-            );
+                UpdateMask: {
+                    Paths: [
+                        'trigger_name',
+                        'trigger_config.scheduled_config.schedule',
+                        'execute_config.prompt_config.execute_prompt',
+                        'push_config',
+                    ],
+                },
+            };
+            await modifyAppTrigger(updateMask, props.applicationId);
+            // ⚠️ ModifyAppTriggerRsp 无 next_fire_time，调用方需补偿刷新
             MessagePlugin.success(i18n.value.updateSuccess);
         } else {
-            await createTimerTask(
-                {
-                    SpaceId: props.spaceId,
-                    Profile: profile as any,
-                    Config: config as any,
-                },
-                props.applicationId,
-            );
+            // —— 创建：调 CreateAppTrigger ——
+            const triggerType = 1; // SCHEDULED
+            const executeType = 1; // PROMPT
+            const payload: CreateAppTriggerPayload = {
+                TriggerName: taskName.value.trim(),
+                TriggerType: triggerType,
+                ExecuteType: executeType,
+                PushConfig: _buildPushConfig(pushData),
+                TriggerConfig: { ScheduledConfig: { Schedule: _buildSchedule(freqData) } },
+                ExecuteConfig: { PromptConfig: { ExecutePrompt: promptData.ExecutePrompt } },
+                Scope: AppTriggerScope.APP,
+            };
+            await createAppTrigger(payload, props.applicationId);
             MessagePlugin.success(i18n.value.createSuccess);
         }
         emit('success', { isEdit: isEdit.value });
@@ -363,8 +349,6 @@ function handleClose() {
 async function resetForm() {
     taskName.value = '';
     promptValue.value = '';
-    selectedModel.value = '';
-    selectedFolder.value = '';
     await _waitChildrenReady();
     promptInputRef.value?.resetForm();
     frequencySelectorRef.value?.resetForm();
@@ -372,36 +356,53 @@ async function resetForm() {
 }
 
 async function fillFormWithTask(task: TimerTaskSummary | TimerTask) {
-    const timerId = getTimerId(task);
-    if (!timerId) return;
+    const triggerId = getTriggerId(task) || getTimerId(task);
+    if (!triggerId) return;
 
     await resetForm();
     detailLoading.value = true;
     try {
-        const detail: any = await describeTimerTask(
-            { SpaceId: props.spaceId, TimerId: timerId },
-            props.applicationId,
-        );
+        // 优先调新 AppTrigger 接口
+        let detail: any = null;
+        try {
+            detail = await describeAppTrigger(triggerId, props.applicationId, AppTriggerScope.APP);
+        } catch {
+            // 回退：旧 TimerTask 接口（存量数据兼容）
+            const { describeTimerTask } = await import('../../../service/cronTaskApi');
+            detail = await describeTimerTask(
+                { SpaceId: props.spaceId, TimerId: triggerId },
+                props.applicationId,
+            );
+        }
 
-        const profile = detail?.profile || detail?.Profile || {};
-        const config = detail?.config || detail?.Config || {};
+        // 从 AppTrigger 或 TimerTask 结构中提取字段
+        const triggerName =
+            detail?.TriggerName ??
+            detail?.profile?.TaskName ?? detail?.Profile?.task_name ?? '';
+        const promptText =
+            detail?.ExecuteConfig?.PromptConfig?.ExecutePrompt ??
+            detail?.execute_config?.prompt_config?.execute_prompt ??
+            detail?.PromptConfig?.ExecutePrompt ??
+            detail?.prompt_config?.execute_prompt ??
+            detail?.profile?.PromptContent ?? detail?.Profile?.prompt_content ??
+            detail?.profile?.prompt ?? detail?.Profile?.Prompt ?? '';
+        const schedule =
+            detail?.TriggerConfig?.ScheduledConfig?.Schedule ??
+            detail?.trigger_config?.scheduled_config?.schedule ??
+            detail?.ScheduledConfig?.Schedule ??
+            detail?.scheduled_config?.schedule ??
+            detail?.config?.Schedule ?? detail?.Config?.schedule ??
+            detail?.config?.schedule ?? null;
+        const pushConfig =
+            detail?.PushConfig ?? detail?.push_config ??
+            detail?.config?.Push ?? detail?.Config?.push ??
+            detail?.config?.push_config ?? detail?.Config?.push_config ?? null;
 
-        taskName.value = profile.task_name ?? profile.TaskName ?? '';
-        const promptText = profile.prompt_content ?? profile.PromptContent ?? profile.prompt ?? profile.Prompt ?? '';
-        const modelId = profile.model_name ?? profile.ModelName ?? profile.model_id ?? profile.ModelId ?? '';
-        const workspaceId =
-            profile.conversation_id ?? profile.ConversationId ?? profile.workspace_id ?? profile.WorkspaceId ?? '';
-        const schedule = config.schedule ?? config.Schedule ?? null;
-        const pushConfig = config.push ?? config.Push ?? config.push_config ?? config.PushConfig ?? null;
-
+        taskName.value = triggerName;
         promptValue.value = promptText;
 
         await _waitChildrenReady();
-        promptInputRef.value?.setFormData({
-            prompt: promptText,
-            modelId,
-            workspaceId,
-        });
+        promptInputRef.value?.setFormData({ ExecutePrompt: promptText });
         if (schedule) frequencySelectorRef.value?.setFormData(schedule);
         if (pushConfig) pushChannelRef.value?.setFormData(pushConfig);
     } catch (e) {
@@ -453,7 +454,7 @@ defineExpose({ resetForm, fillFormWithTask });
 }
 
 .cron-create-task-dialog__required {
-    color: var(--td-error-color, #e54545);
+    color: var(--td-error-color);
     margin-left: var(--td-size-1);
 }
 
@@ -466,7 +467,7 @@ defineExpose({ resetForm, fillFormWithTask });
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(255, 255, 255, 0.7);
+    background: var(--td-mask-disabled);
     z-index: 10;
 }
 
@@ -474,8 +475,8 @@ defineExpose({ resetForm, fillFormWithTask });
     display: flex;
     justify-content: flex-end;
     gap: var(--td-size-4);
-    padding-top: 12px;
-    border-top: 1px solid var(--td-component-border, rgba(0, 0, 0, 0.08));
+    padding-top: var(--td-size-5);
+    border-top: 1px solid var(--td-component-border);
     margin-top: var(--td-size-5);
 }
 </style>

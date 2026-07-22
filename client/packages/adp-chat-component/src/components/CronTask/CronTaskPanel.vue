@@ -21,9 +21,17 @@
         <!-- 操作条 -->
         <div class="panel-action-bar">
             <t-button theme="primary" @click="onManualCreate">
-                <template #icon><add-icon /></template>
+                <template #icon>
+                    <CustomizedIcon
+                        remote
+                        name="basic_new_line"
+                        size="xxs"
+                        :show-hover-bg="false"
+                        :theme="theme"
+                    />
+                </template>
                 {{ i18n.createManual }}
-            </t-button>          
+            </t-button>
         </div>
 
         <!-- 卡片列表 -->
@@ -47,9 +55,9 @@
             <div v-else class="task-card-list">
                 <CronTaskCard
                     v-for="item in list"
-                    :key="getTimerId(item)"
+                    :key="getEntityId(item)"
                     :task="item"
-                    :action-loading="operatingTaskId === getTimerId(item)"
+                    :action-loading="operatingTaskId === getEntityId(item)"
                     :theme="theme"
                     :language="language"
                     :i18n="i18n"
@@ -77,8 +85,6 @@
             :theme="theme"
             :language="language"
             :i18n="i18n"
-            :folder-options="folderOptions"
-            :model-options="modelOptions"
             @success="onCreateSuccess"
             @close="onDialogClose"
         />
@@ -98,14 +104,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, watch } from 'vue';
 import {
     Button as TButton,
     Tooltip as TTooltip,
     Loading as TLoading,
     MessagePlugin,
 } from 'tdesign-vue-next';
-import { AddIcon } from 'tdesign-icons-vue-next';
 import CustomizedIcon from '../CustomizedIcon.vue';
 import CronTaskCard from './CronTaskCard.vue';
 import CreateTaskDialog from './CreateTaskDialog/CreateTaskDialog.vue';
@@ -119,12 +124,14 @@ import type {
 } from '../../model/cronTask';
 import { getCronTaskI18nByLanguage } from '../../model/cronTask';
 import {
-    describeTimerTaskSummaryList,
-    pauseTimerTask,
-    resumeTimerTask,
-    runTimerTaskNow,
-} from '../../service/cronTaskApi';
+    describeAppTriggerSummaryList,
+    pauseAppTrigger,
+    resumeAppTrigger,
+    runAppTriggerNow,
+} from '../../service/appTriggerApi';
+import { AppTriggerScope } from '../../model/appTrigger';
 import { getTimerId } from '../../utils/cronTask';
+import { getTriggerId } from '../../utils/appTrigger';
 
 export interface FolderOption { label: string; value: string }
 export interface ModelOption { label: string; value: string }
@@ -132,16 +139,12 @@ export interface ModelOption { label: string; value: string }
 export interface Props extends ThemeProps {
     /** 应用 ID（/adp 代理必需） */
     applicationId: string;
-    /** 空间 ID */
+    /** @deprecated AppTrigger 不再依赖 spaceId，保留以兼容旧调用方 */
     spaceId?: string;
     /** 语言 */
     language?: string;
     /** i18n 覆盖 */
     i18n?: Partial<CronTaskI18n>;
-    /** 关联文件夹选项（新建/编辑对话框使用） */
-    folderOptions?: FolderOption[];
-    /** 模型选项 */
-    modelOptions?: ModelOption[];
     /** 每页大小 */
     pageSize?: number;
 }
@@ -151,8 +154,6 @@ const props = withDefaults(defineProps<Props>(), {
     spaceId: '',
     language: 'zh-CN',
     i18n: () => ({}),
-    folderOptions: () => [],
-    modelOptions: () => [],
     pageSize: 20,
 });
 
@@ -185,20 +186,28 @@ const deleteDialogVisible = ref(false);
 const deletingTask = ref<TimerTaskSummary | TimerTask | null>(null);
 
 // ─── API 调用 ──────────────────────────────────────────
+/**
+ * 获取实体的唯一标识（兼容 AppTrigger:TriggerId + TimerTask:TimerId）
+ */
+function getEntityId(item: any): string {
+    return getTriggerId(item) || getTimerId(item);
+}
+
 async function fetchList() {
     if (loading.value) return;
+    if (!props.applicationId) return;   // applicationId 尚未就绪，等待 watch 触发
     loading.value = true;
     try {
-        const res = await describeTimerTaskSummaryList(
+        const res = await describeAppTriggerSummaryList(
             {
-                SpaceId: props.spaceId,
                 PageNumber: 1,
                 PageSize: props.pageSize,
+                Scope: AppTriggerScope.APP,
             },
             props.applicationId,
         );
-        // 兼容 task_list / TaskList
-        const items = (res as any)?.task_list || res?.TaskList || [];
+        // 兼容 trigger_list / TriggerList
+        const items = (res as any)?.trigger_list || res?.TriggerList || [];
         list.value = items;
         page.value = 1;
         hasMore.value = items.length >= props.pageSize;
@@ -215,18 +224,18 @@ async function fetchMore() {
     loadingMore.value = true;
     try {
         const next = page.value + 1;
-        const res = await describeTimerTaskSummaryList(
+        const res = await describeAppTriggerSummaryList(
             {
-                SpaceId: props.spaceId,
                 PageNumber: next,
                 PageSize: props.pageSize,
+                Scope: AppTriggerScope.APP,
             },
             props.applicationId,
         );
-        const items = (res as any)?.task_list || res?.TaskList || [];
-        const existing = new Set(list.value.map((t) => getTimerId(t)));
+        const items = (res as any)?.trigger_list || res?.TriggerList || [];
+        const existing = new Set(list.value.map((t) => getEntityId(t)));
         items.forEach((t: any) => {
-            if (!existing.has(getTimerId(t))) list.value.push(t);
+            if (!existing.has(getEntityId(t))) list.value.push(t);
         });
         page.value = next;
         hasMore.value = items.length >= props.pageSize;
@@ -247,11 +256,11 @@ async function refreshAfterAction() {
         const requests = [];
         for (let p = 1; p <= pages; p++) {
             requests.push(
-                describeTimerTaskSummaryList(
+                describeAppTriggerSummaryList(
                     {
-                        SpaceId: props.spaceId,
                         PageNumber: p,
                         PageSize: props.pageSize,
+                        Scope: AppTriggerScope.APP,
                     },
                     props.applicationId,
                 ),
@@ -261,9 +270,9 @@ async function refreshAfterAction() {
         const seen = new Set<string>();
         const newList: any[] = [];
         responses.forEach((res) => {
-            const items = (res as any)?.task_list || res?.TaskList || [];
+            const items = (res as any)?.trigger_list || res?.TriggerList || [];
             items.forEach((t: any) => {
-                const id = getTimerId(t);
+                const id = getEntityId(t);
                 if (id && !seen.has(id)) {
                     seen.add(id);
                     newList.push(t);
@@ -272,8 +281,8 @@ async function refreshAfterAction() {
         });
         list.value = newList;
         page.value = pages;
-        const lastItems = ((responses[responses.length - 1] as any)?.task_list ||
-            responses[responses.length - 1]?.TaskList ||
+        const lastItems = ((responses[responses.length - 1] as any)?.trigger_list ||
+            responses[responses.length - 1]?.TriggerList ||
             []) as any[];
         hasMore.value = lastItems.length >= props.pageSize;
     } catch (e) {
@@ -317,13 +326,10 @@ function onDeleteSuccess() {
 }
 
 async function onPause(task: any) {
-    const id = getTimerId(task);
+    const id = getEntityId(task);
     operatingTaskId.value = id;
     try {
-        await pauseTimerTask(
-            { SpaceId: props.spaceId, TimerId: id },
-            props.applicationId,
-        );
+        await pauseAppTrigger(id, props.applicationId, AppTriggerScope.APP);
         MessagePlugin.success(i18n.value.pauseSuccess);
         await refreshAfterAction();
     } catch (e) {
@@ -335,13 +341,11 @@ async function onPause(task: any) {
 }
 
 async function onResume(task: any) {
-    const id = getTimerId(task);
+    const id = getEntityId(task);
     operatingTaskId.value = id;
     try {
-        await resumeTimerTask(
-            { SpaceId: props.spaceId, TimerId: id },
-            props.applicationId,
-        );
+        // ⚠️ ResumeAppTriggerRsp 无 next_fire_time 返回，详情页需补偿刷新
+        await resumeAppTrigger(id, props.applicationId, AppTriggerScope.APP);
         MessagePlugin.success(i18n.value.resumeSuccess);
         await refreshAfterAction();
     } catch (e) {
@@ -363,13 +367,11 @@ function onDelete(task: any) {
 }
 
 async function onRunNow(task: any) {
-    const id = getTimerId(task);
+    const id = getEntityId(task);
     operatingTaskId.value = id;
     try {
-        await runTimerTaskNow(
-            { SpaceId: props.spaceId, TimerId: id },
-            props.applicationId,
-        );
+        // 新版返回 instanceId，旧版返回 { LogId, SessionId }
+        await runAppTriggerNow(id, props.applicationId, AppTriggerScope.APP);
         MessagePlugin.success(i18n.value.runNowSuccess);
         emit('run-and-view', task);
         await refreshAfterAction();
@@ -382,9 +384,19 @@ async function onRunNow(task: any) {
 }
 
 // ─── 生命周期 ──────────────────────────────────────────
-onMounted(() => {
-    fetchList();
-});
+// 组件挂载后，等 applicationId 就绪再拉取列表
+// 场景：父组件可能在后续异步流程中才注入 appid，避免空值请求
+let _initFetched = false;
+watch(
+    () => props.applicationId,
+    (id) => {
+        if (id && !_initFetched) {
+            _initFetched = true;
+            fetchList();
+        }
+    },
+    { immediate: true },
+);
 
 defineExpose({
     fetchList,
@@ -397,7 +409,7 @@ defineExpose({
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: var(--td-bg-color-container, #fff);
+    background: var(--td-bg-color-container);
 }
 
 /* 标题栏 */
@@ -419,12 +431,12 @@ defineExpose({
     font-size: var(--td-font-size-title-large);
     font-weight: 600;
     line-height: var(--td-line-height-title-large);
-    color: var(--td-text-color-primary, rgba(0, 1, 10, 0.93));
+    color: var(--td-text-color-primary);
 }
 
 .help-icon {
     display: inline-flex;
-    color: var(--td-text-color-placeholder, rgba(1, 11, 50, 0.41));
+    color: var(--td-text-color-placeholder);
     cursor: pointer;
 }
 
@@ -453,12 +465,12 @@ defineExpose({
 }
 
 .panel-body::-webkit-scrollbar-thumb {
-    border-radius: 3px;
+    border-radius: var(--td-radius-default);
     background: transparent;
 }
 
 .panel-body:hover::-webkit-scrollbar-thumb {
-    background: rgba(17, 32, 70, 0.13);
+    background: var(--td-scrollbar-color);
 }
 
 /* 空状态 */
@@ -472,15 +484,15 @@ defineExpose({
 }
 
 .empty-text {
-    font-size: 13px;
+    font-size: var(--td-font-size-body-small);
     line-height: var(--td-line-height-body-small);
-    color: var(--td-text-color-placeholder, rgba(1, 11, 50, 0.41));
+    color: var(--td-text-color-placeholder);
     text-align: center;
     margin: 0;
 }
 
 .empty-text--highlight {
-    color: var(--td-brand-color, #4a70ff);
+    color: var(--td-brand-color);
     cursor: pointer;
     margin-left: var(--td-size-2);
 }

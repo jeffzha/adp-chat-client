@@ -11,51 +11,18 @@
             :maxlength="maxLength"
             :autosize="{ minRows: 4, maxRows: 10 }"
         />
-
-        <div class="cron-prompt-input__extra">
-            <div v-if="modelOptions.length > 0" class="cron-prompt-input__field">
-                <span class="cron-prompt-input__field-label">{{ i18n.modelLabel }}</span>
-                <t-select
-                    v-model="modelId"
-                    :options="modelOptions"
-                    :placeholder="i18n.modelLabel"
-                    filterable
-                    clearable
-                    size="small"
-                    class="cron-prompt-input__select"
-                />
-            </div>
-            <div v-if="folderOptions.length > 0" class="cron-prompt-input__field">
-                <span class="cron-prompt-input__field-label">{{ i18n.conversationLabel }}</span>
-                <t-select
-                    v-model="workspaceId"
-                    :options="folderOptions"
-                    :placeholder="i18n.conversationPlaceholder"
-                    :disabled="disableFolder"
-                    filterable
-                    clearable
-                    size="small"
-                    class="cron-prompt-input__select"
-                />
-            </div>
-        </div>
     </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
-import { Textarea as TTextarea, Select as TSelect } from 'tdesign-vue-next';
+import { computed } from 'vue';
+import { Textarea as TTextarea } from 'tdesign-vue-next';
 import type { CronTaskI18n } from '../../../model/cronTask';
 import { getCronTaskI18nByLanguage } from '../../../model/cronTask';
-
-interface Option { label: string; value: string }
 
 interface Props {
     modelValue: string;
     maxLength?: number;
-    disableFolder?: boolean;
-    modelOptions?: Option[];
-    folderOptions?: Option[];
     language?: string;
     i18n?: Partial<CronTaskI18n>;
 }
@@ -63,17 +30,12 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
     modelValue: '',
     maxLength: 10000,
-    disableFolder: false,
-    modelOptions: () => [],
-    folderOptions: () => [],
     language: 'zh-CN',
     i18n: () => ({}),
 });
 
 const emit = defineEmits<{
     (e: 'update:modelValue', val: string): void;
-    (e: 'model-change', val: string): void;
-    (e: 'folder-change', val: string): void;
 }>();
 
 const i18n = computed<Required<CronTaskI18n>>(() => ({
@@ -86,12 +48,6 @@ const innerValue = computed({
     set: (val) => emit('update:modelValue', val),
 });
 
-const modelId = ref<string>('');
-const workspaceId = ref<string>('');
-
-watch(modelId, (val) => emit('model-change', val));
-watch(workspaceId, (val) => emit('folder-change', val));
-
 /** 表单校验 */
 function validate(): { valid: boolean; message?: string } {
     if (!innerValue.value || !innerValue.value.trim()) {
@@ -100,27 +56,28 @@ function validate(): { valid: boolean; message?: string } {
     return { valid: true };
 }
 
-/** 获取表单数据 */
-function getFormData() {
+/**
+ * 获取表单数据（返回 AppTrigger 字段结构）
+ * AppTrigger 使用 ExecutePrompt，不再携带 modelId / workspaceId
+ */
+function getFormData(): { ExecutePrompt: string } {
     return {
-        prompt: innerValue.value?.trim() || '',
-        modelId: modelId.value || '',
-        workspaceId: workspaceId.value || '',
+        ExecutePrompt: innerValue.value?.trim() || '',
     };
 }
 
-/** 设置表单数据（编辑回填） */
-function setFormData(data: { prompt?: string; modelId?: string; workspaceId?: string }) {
-    if (data.prompt !== undefined) emit('update:modelValue', data.prompt || '');
-    if (data.modelId !== undefined) modelId.value = data.modelId || '';
-    if (data.workspaceId !== undefined) workspaceId.value = data.workspaceId || '';
+/**
+ * 设置表单数据（编辑回填）
+ * 同时兼容旧字段 prompt 和新字段 ExecutePrompt
+ */
+function setFormData(data: { ExecutePrompt?: string; prompt?: string }) {
+    const val = data.ExecutePrompt ?? data.prompt ?? '';
+    emit('update:modelValue', val);
 }
 
 /** 重置表单 */
 function resetForm() {
     emit('update:modelValue', '');
-    modelId.value = '';
-    workspaceId.value = '';
 }
 
 defineExpose({ validate, getFormData, setFormData, resetForm });
@@ -141,32 +98,7 @@ defineExpose({ validate, getFormData, setFormData, resetForm });
 }
 
 .cron-prompt-input__required {
-    color: var(--td-error-color, #e54545);
+    color: var(--td-error-color);
     margin-left: var(--td-size-1);
-}
-
-.cron-prompt-input__extra {
-    display: flex;
-    gap: var(--td-size-5);
-    flex-wrap: wrap;
-}
-
-.cron-prompt-input__field {
-    display: flex;
-    align-items: center;
-    gap: var(--td-size-3);
-    flex: 1;
-    min-width: 200px;
-}
-
-.cron-prompt-input__field-label {
-    font-size: var(--td-font-size-body-small);
-    color: var(--td-text-color-secondary);
-    flex-shrink: 0;
-}
-
-.cron-prompt-input__select {
-    flex: 1;
-    min-width: 0;
 }
 </style>

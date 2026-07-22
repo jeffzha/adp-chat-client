@@ -87,6 +87,8 @@ class ForwardApi(HTTPMethodView):
         variables = {
             'APP_KEY': vendor_app.config.get('AppKey', ''),
             'ACCOUNT_ID': request.ctx.account_id,
+            'ApplicationId': application_id,
+            'AppId': vendor_app.config.get('AppId', ''),
         }
 
         logging.info(f'[ForwardApi] Action={action}, ApplicationId={application_id}')

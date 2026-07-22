@@ -24,8 +24,10 @@ import type { ThemeProps } from '../../model/type';
 import { themePropsDefaults } from '../../model/type';
 import type { CronTaskI18n, TimerTask, TimerTaskSummary } from '../../model/cronTask';
 import { getCronTaskI18nByLanguage } from '../../model/cronTask';
-import { deleteTimerTask } from '../../service/cronTaskApi';
+import { AppTriggerScope } from '../../model/appTrigger';
+import { deleteAppTrigger } from '../../service/appTriggerApi';
 import { getTimerId } from '../../utils/cronTask';
+import { getTriggerId } from '../../utils/appTrigger';
 
 interface Props extends ThemeProps {
     visible: boolean;
@@ -66,17 +68,15 @@ const dialogVisible = computed({
 });
 
 async function onConfirm() {
-    const id = getTimerId(props.task);
+    // 兼容 AppTrigger:TriggerId + TimerTask:TimerId
+    const id = getTriggerId(props.task) || getTimerId(props.task);
     if (!id) {
         emit('update:visible', false);
         return;
     }
     loading.value = true;
     try {
-        await deleteTimerTask(
-            { SpaceId: props.spaceId, TimerId: id },
-            props.applicationId,
-        );
+        await deleteAppTrigger(id, props.applicationId, AppTriggerScope.APP);
         MessagePlugin.success(mergedI18n.value.deleteSuccess);
         emit('success', props.task);
         emit('update:visible', false);
