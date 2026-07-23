@@ -29,6 +29,9 @@ const currentConversationChannel = ref<boolean>(false);
 //   3) 若携带 triggerId，定位到该触发器的详情视图
 const currentConversationCronTask = ref<boolean>(false);
 const currentConversationCronTaskTriggerId = ref<string>('');
+// 当前定时任务会话对应的执行记录 InstanceId（URL 携带的 logId query）。
+// 用于刷新后自动在右侧 sidebar 高亮当前那条运行记录，避免"没有选中当前项"。
+const currentConversationCronTaskLogId = ref<string>('');
 
 // API 配置 - 使用组件自动加载数据
 
@@ -148,7 +151,7 @@ onMounted(async () => {
 // URL 参数处理：
 //   普通会话：/:applicationId?/:conversationId?
 //   渠道会话：/:applicationId/channel/:conversationId  （route.name === 'home-channel'）
-//   定时任务：/:applicationId/timertask/:conversationId?triggerId=xxx （route.name === 'home-timertask'）
+//   定时任务：/:applicationId/timertask/:conversationId?triggerId=xxx&logId=yyy （route.name === 'home-timertask'）
 const updateFromUrl = () => {
     console.log('updateFromUrl', route.name, route.params, route.query);
     currentApplicationId.value = (route.params.applicationId as string) || '';
@@ -158,6 +161,9 @@ const updateFromUrl = () => {
     currentConversationCronTaskTriggerId.value = currentConversationCronTask.value
         ? ((route.query.triggerId as string) || '')
         : '';
+    currentConversationCronTaskLogId.value = currentConversationCronTask.value
+        ? ((route.query.logId as string) || '')
+        : '';
 };
 
 // 监听路由参数变化
@@ -166,14 +172,15 @@ watch(() => route.params.conversationId, () => updateFromUrl());
 // 路由名变化（普通 <-> 渠道 <-> 定时任务）也要重新同步 flag
 watch(() => route.name, () => updateFromUrl());
 watch(() => route.query.triggerId, () => updateFromUrl());
+watch(() => route.query.logId, () => updateFromUrl());
 
 /**
  * 更新 URL
  * - fromChannel=true：使用 home-channel 路由（/:appId/channel/:convId）
- * - fromCronTask=true：使用 home-timertask 路由（/:appId/timertask/:convId?triggerId=xxx）
+ * - fromCronTask=true：使用 home-timertask 路由（/:appId/timertask/:convId?triggerId=xxx&logId=yyy）
  * - 否则使用 home 路由
  */
-const updateUrl = (fromChannel = false, fromCronTask = false, triggerId = '') => {
+const updateUrl = (fromChannel = false, fromCronTask = false, triggerId = '', logId = '') => {
     // 会话 id 必须依附在某个 applicationId 之下，避免出现无 app 的孤儿会话 URL
     const params: Record<string, string> = {};
     if (currentApplicationId.value) {
@@ -189,8 +196,11 @@ const updateUrl = (fromChannel = false, fromCronTask = false, triggerId = '') =>
         else if (fromChannel) routeName = 'home-channel';
     }
     const query: Record<string, string> = {};
-    if (routeName === 'home-timertask' && triggerId) {
-        query.triggerId = triggerId;
+    if (routeName === 'home-timertask') {
+        if (triggerId) query.triggerId = triggerId;
+        // logId 单独判断：允许仅有 triggerId 而无 logId 的情况（sidebar 会拉列表，无高亮）；
+        // 但当 logId 存在时必须写入，保证刷新后能高亮当前那条运行记录。
+        if (logId) query.logId = logId;
     }
     router.push({ name: routeName, params, query });
 };
@@ -202,6 +212,7 @@ const handleSelectApplication = (app: Application) => {
     currentConversationChannel.value = false;
     currentConversationCronTask.value = false;
     currentConversationCronTaskTriggerId.value = '';
+    currentConversationCronTaskLogId.value = '';
     updateUrl();
 };
 
@@ -217,6 +228,7 @@ const handleSelectConversation = (conversation: ChatConversation, fromChannel = 
     // 切换到普通/渠道会话时清空定时任务 flag，避免残留导致 URL 错乱
     currentConversationCronTask.value = false;
     currentConversationCronTaskTriggerId.value = '';
+    currentConversationCronTaskLogId.value = '';
     updateUrl(fromChannel);
 };
 
@@ -225,13 +237,15 @@ const handleCreateConversation = () => {
     currentConversationChannel.value = false;
     currentConversationCronTask.value = false;
     currentConversationCronTaskTriggerId.value = '';
+    currentConversationCronTaskLogId.value = '';
     updateUrl();
 };
 
 /**
  * 定时任务执行记录 → 切到对话窗口：
  * ADPChat 会 emit `cronTaskSwitchToChat`，携带 { task, triggerId, sessionId, logId, userId }。
- * 这里负责同步 URL 到 /:appId/timertask/:convId?triggerId=xxx，保证刷新可恢复。
+ * 这里负责同步 URL 到 /:appId/timertask/:convId?triggerId=xxx&logId=yyy，保证刷新可恢复，
+ * 并让右侧执行记录 sidebar 高亮当前项。
  */
 const handleCronTaskSwitchToChat = (payload: {
     task: unknown;
@@ -245,20 +259,31 @@ const handleCronTaskSwitchToChat = (payload: {
     currentConversationChannel.value = false;
     currentConversationCronTask.value = true;
     currentConversationCronTaskTriggerId.value = payload.triggerId || '';
-    updateUrl(false, true, currentConversationCronTaskTriggerId.value);
+    currentConversationCronTaskLogId.value = payload.logId || '';
+    updateUrl(
+        false,
+        true,
+        currentConversationCronTaskTriggerId.value,
+        currentConversationCronTaskLogId.value,
+    );
 };
 
 /**
  * 再次点击"定时任务"入口：Index.vue 已将面板重置为初始 list 视图，
- * 这里负责清空 URL 中的 timertask 变体（/timertask/xxx?triggerId=yyy）,
+ * 这里负责清空 URL 中的 timertask 变体（/timertask/xxx?triggerId=yyy&logId=zzz）,
  * 保留会话 id（若原本处于定时任务会话下，切回普通会话 URL；否则维持现状）。
  */
 const handleCronTaskResetUrl = () => {
-    if (!currentConversationCronTask.value && !currentConversationCronTaskTriggerId.value) {
+    if (
+        !currentConversationCronTask.value
+        && !currentConversationCronTaskTriggerId.value
+        && !currentConversationCronTaskLogId.value
+    ) {
         return;
     }
     currentConversationCronTask.value = false;
     currentConversationCronTaskTriggerId.value = '';
+    currentConversationCronTaskLogId.value = '';
     // 同时清空 conversationId：定时任务会话不再属于当前上下文，回到"选中应用"的初始状态
     currentConversationId.value = '';
     currentConversationChannel.value = false;
@@ -286,7 +311,17 @@ const handleDataLoaded = (type: 'applications' | 'conversations' | 'chatList' | 
         if (!currentApplicationId.value && !currentConversationId.value) {
             currentApplicationId.value = data[0].ApplicationId;
         }
-        updateUrl();
+        // 关键：这里的 updateUrl 必须带上当前的 channel / cronTask flag + triggerId + logId，
+        // 否则 URL 会被回退成通用 home 路由（/appId/convId），刷新 timertask/channel 页面时
+        // /timertask/ 或 /channel/ 段以及 ?triggerId=xxx&logId=yyy query 会被丢掉，
+        // 进而使 Index.vue 里"定时任务会话恢复"watch 判定 flag=false 而不拉执行记录，
+        // 或者 sidebar 因缺 logId 而无法高亮"当前项"。
+        updateUrl(
+            currentConversationChannel.value,
+            currentConversationCronTask.value,
+            currentConversationCronTaskTriggerId.value,
+            currentConversationCronTaskLogId.value,
+        );
     }
 };
 
@@ -305,6 +340,7 @@ const handleConversationChange = (conversationId: string) => {
         currentConversationChannel.value,
         currentConversationCronTask.value,
         currentConversationCronTaskTriggerId.value,
+        currentConversationCronTaskLogId.value,
     );
 };
 </script>
@@ -325,6 +361,7 @@ const handleConversationChange = (conversationId: string) => {
         :currentConversationChannel="currentConversationChannel"
         :currentConversationCronTask="currentConversationCronTask"
         :currentConversationCronTaskTriggerId="currentConversationCronTaskTriggerId"
+        :currentConversationCronTaskLogId="currentConversationCronTaskLogId"
         :aiWarningText="t('common.aiWarning')"
         :createConversationText="t('conversation.createConversation')"
         :sideI18n="sideI18n"

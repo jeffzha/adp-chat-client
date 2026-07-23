@@ -313,7 +313,6 @@ defineExpose({
     align-items: center;
     justify-content: space-between;
     padding: var(--td-comp-paddingTB-m) var(--td-comp-paddingLR-l);
-    border-bottom: 1px solid var(--td-border-level-1-color);
     flex-shrink: 0;
     line-height: 31px;
 }

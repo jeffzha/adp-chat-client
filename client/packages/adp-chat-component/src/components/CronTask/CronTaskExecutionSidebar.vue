@@ -41,6 +41,13 @@ interface Props extends ThemeProps {
     task: TimerTaskSummary | TimerTask | null;
     /** 应用 ID */
     applicationId: string;
+    /**
+     * 触发器作用域（proto AppTriggerScope）。
+     * USER(2) = C 端访客，默认，需配合 userId；APP(1) = B 端管理员。
+     */
+    scope?: number;
+    /** C 端访客 ID，scope=USER 时必填 */
+    userId?: string;
     /** 语言 */
     language?: string;
     /** i18n 覆盖 */
@@ -58,6 +65,8 @@ const props = withDefaults(defineProps<Props>(), {
     visible: false,
     task: null,
     applicationId: '',
+    scope: AppTriggerScope.USER,
+    userId: '',
     language: 'zh-CN',
     i18n: () => ({}),
     activeLogId: '',
@@ -150,13 +159,15 @@ function getLogUserId(log: any): string {
 }
 
 function getLogStatusClass(status: number): string {
+    // 严格对齐 proto TimerRunStatus：0 UNSPECIFIED / 1 PENDING / 2 RUNNING /
+    // 3 RETRY_WAIT / 4 SUCCESS / 5 DEAD(失败) / 6 CANCELLED
     const map: Record<number, string> = {
         [TimerRunStatus.PENDING]: 'pending',
         [TimerRunStatus.RUNNING]: 'running',
+        [TimerRunStatus.RETRY_WAIT]: 'running',
         [TimerRunStatus.SUCCESS]: 'success',
-        [TimerRunStatus.FAILED]: 'failed',
-        [TimerRunStatus.CANCELED]: 'pending',
-        [TimerRunStatus.TIMEOUT]: 'failed',
+        [TimerRunStatus.DEAD]: 'failed',
+        [TimerRunStatus.CANCELLED]: 'pending',
     };
     return map[status] || 'pending';
 }
@@ -164,11 +175,11 @@ function getLogStatusText(status: number): string {
     const en = props.language?.startsWith('en');
     const map: Record<number, string> = {
         [TimerRunStatus.PENDING]: en ? 'Pending' : '等待执行',
-        [TimerRunStatus.RUNNING]: en ? 'Running' : '正在执行',
+        [TimerRunStatus.RUNNING]: en ? 'Running' : '执行中',
+        [TimerRunStatus.RETRY_WAIT]: en ? 'Retry Waiting' : '等待重试',
         [TimerRunStatus.SUCCESS]: en ? 'Success' : '执行成功',
-        [TimerRunStatus.FAILED]: en ? 'Failed' : '执行失败',
-        [TimerRunStatus.CANCELED]: en ? 'Canceled' : '已取消',
-        [TimerRunStatus.TIMEOUT]: en ? 'Timeout' : '超时',
+        [TimerRunStatus.DEAD]: en ? 'Failed' : '执行失败',
+        [TimerRunStatus.CANCELLED]: en ? 'Cancelled' : '已取消',
     };
     return map[status] || '';
 }
@@ -224,7 +235,8 @@ async function fetchLogs(silent = false): Promise<void> {
                 TriggerId: id,
                 PageNumber: 1,
                 PageSize: props.pageSize,
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -253,7 +265,8 @@ async function loadMore(): Promise<void> {
                 TriggerId: id,
                 PageNumber: nextPage,
                 PageSize: props.pageSize,
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -288,7 +301,8 @@ async function silentPollRefresh(): Promise<void> {
                 TriggerId: id,
                 PageNumber: 1,
                 PageSize: totalSize,
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -348,7 +362,8 @@ async function markSingleLogRead(instanceId: string): Promise<void> {
             {
                 TriggerId: id,
                 InstanceIdList: [instanceId],
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -373,7 +388,8 @@ async function handleMarkAllRead(): Promise<void> {
             {
                 TriggerId: id,
                 InstanceIdList: [],
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -466,6 +482,11 @@ onBeforeUnmount(() => {
                 <p class="ces-empty__text">{{ mergedI18n.noRunLog }}</p>
             </div>
             <div v-else ref="listRef" class="ces-list" @scroll="handleScroll">
+                <!-- 列表项对齐 webim task-list-panel：
+                     - 左侧：content（title，两行文案）+ status（desc）
+                     - 右侧：time（相对时间，如"1天前"）
+                     - 未读小红点 absolute 定位于右上角
+                     - 无 border-bottom；靠 hover / active 背景色区分 -->
                 <div
                     v-for="log in executionLogs"
                     :key="log.logId || `${log.timeLabel}-${log.statusText}`"
@@ -473,15 +494,15 @@ onBeforeUnmount(() => {
                     :class="{ active: activeLogId && activeLogId === log.logId }"
                     @click="handleSelect(log)"
                 >
-                    <div class="ces-item__header">
-                        <span class="ces-item__time">{{ log.timeLabel }}</span>
-                        <span
+                    <span v-if="log.isUnread" class="ces-item__dot" />
+                    <div class="ces-item__content">
+                        <div v-if="log.content" class="ces-item__title">{{ log.content }}</div>
+                        <div
                             class="ces-item__status"
                             :class="`ces-item__status--${log.statusClass}`"
-                        >{{ log.statusText }}</span>
-                        <span v-if="log.isUnread" class="ces-item__dot" />
+                        >{{ log.statusText }}</div>
                     </div>
-                    <div v-if="log.content" class="ces-item__content">{{ log.content }}</div>
+                    <span class="ces-item__time">{{ log.timeLabel }}</span>
                 </div>
                 <div v-if="loadingMore" class="ces-tip">{{ mergedI18n.loading }}</div>
                 <div v-else-if="!hasMore && executionLogs.length" class="ces-tip">
@@ -512,7 +533,6 @@ onBeforeUnmount(() => {
     align-items: center;
     justify-content: space-between;
     padding: var(--td-size-6) var(--td-size-7);
-    border-bottom: 1px solid var(--td-component-border);
     flex-shrink: 0;
     gap: var(--td-size-4);
 }
@@ -609,7 +629,7 @@ onBeforeUnmount(() => {
     color: var(--td-text-color-placeholder);
 }
 
-/* ---------------- 列表：对齐 webim .log-list 无 gap、条目下边框 ---------------- */
+/* ---------------- 列表：对齐 webim task-list-panel（无分割线，item 圆角 hover） ---------------- */
 .ces-list {
     flex: 1;
     min-height: 0;
@@ -636,18 +656,19 @@ onBeforeUnmount(() => {
     background: var(--td-scrollbar-color);
 }
 
-/* ---------------- 列表项：对齐 webim .log-item 16px 上下 + 8px 左右 + hover ---------------- */
+/* ---------------- 列表项：对齐 webim .task-list-panel__item
+     - 左内容（title/desc）+ 右时间（右对齐独立列）
+     - 无 border-bottom；圆角 3px；hover / active 背景色区分
+     - 未读小红点 absolute 定位于右上角 ---------------- */
 .ces-item {
     position: relative;
-    padding: var(--td-size-6) var(--td-size-4);
+    display: flex;
+    align-items: center;
+    padding: var(--td-size-5);
+    border-radius: var(--td-radius-small);
     cursor: pointer;
-    border-bottom: 1px solid var(--td-component-border);
     transition: background-color 0.2s ease;
     color: var(--td-text-color-primary);
-}
-
-.ces-item:last-child {
-    border-bottom: 0;
 }
 
 .ces-item:hover:not(.active) {
@@ -658,22 +679,31 @@ onBeforeUnmount(() => {
     background: var(--td-bg-color-container-active);
 }
 
-.ces-item__header {
+.ces-item__content {
+    flex: 1;
+    min-width: 0;
     display: flex;
-    align-items: center;
-    gap: var(--td-size-4);
-    margin-bottom: var(--td-size-2);
+    flex-direction: column;
+    gap: var(--td-size-2);
 }
 
-.ces-item__time {
+.ces-item__title {
     font-size: var(--td-font-size-body-small);
     font-weight: 500;
-    color: var(--td-text-color-secondary);
+    line-height: var(--td-line-height-body-small);
+    color: var(--td-text-color-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .ces-item__status {
-    font-size: var(--td-font-size-body-small);
+    font-size: 12px;
+    line-height: 16px;
     color: var(--td-text-color-placeholder);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .ces-item__status--success {
@@ -686,23 +716,23 @@ onBeforeUnmount(() => {
     color: var(--td-brand-color);
 }
 
+.ces-item__time {
+    flex-shrink: 0;
+    margin-left: var(--td-size-4);
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--td-text-color-placeholder);
+}
+
 .ces-item__dot {
+    position: absolute;
+    top: var(--td-size-3);
+    right: var(--td-size-3);
     width: 8px;
     height: 8px;
     border-radius: var(--td-radius-circle);
     background: var(--td-error-color);
-    margin-left: auto;
     flex-shrink: 0;
-}
-
-.ces-item__content {
-    font-size: var(--td-font-size-body-small);
-    color: var(--td-text-color-placeholder);
-    line-height: var(--td-line-height-body-small);
-    word-break: break-word;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .ces-tip {

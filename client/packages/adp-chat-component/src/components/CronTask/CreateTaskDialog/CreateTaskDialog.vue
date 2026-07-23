@@ -47,6 +47,7 @@
             <div class="cron-create-task-dialog__form-item">
                 <PushChannel
                     ref="pushChannelRef"
+                    :application-id="applicationId"
                     :language="language"
                     :i18n="i18n"
                     @change="scrollBodyToBottom"
@@ -87,10 +88,16 @@ import {
 import PromptInput from './PromptInput.vue';
 import FrequencySelector from './FrequencySelector.vue';
 import PushChannel from './PushChannel.vue';
-import type { CronTaskI18n, TimerTask, TimerTaskSummary } from '../../../model/cronTask';
+import type {
+    CronTaskI18n,
+    TimerTask,
+    TimerTaskSummary,
+    TimerPushChannelValue,
+} from '../../../model/cronTask';
 import {
     TimerScheduleType,
     TimerPushChannel,
+    TimerPushTargetType,
     getCronTaskI18nByLanguage,
 } from '../../../model/cronTask';
 import { AppTriggerScope } from '../../../model/appTrigger';
@@ -109,6 +116,13 @@ interface Props {
     applicationId: string;
     /** @deprecated AppTrigger 不再需要 spaceId */
     spaceId?: string;
+    /**
+     * 触发器作用域（proto AppTriggerScope）。
+     * USER(2) = C 端访客，默认，需配合 userId；APP(1) = B 端管理员。
+     */
+    scope?: number;
+    /** C 端访客 ID，scope=USER 时必填 */
+    userId?: string;
     language?: string;
     i18n?: Partial<CronTaskI18n>;
 }
@@ -117,6 +131,8 @@ const props = withDefaults(defineProps<Props>(), {
     visible: false,
     editingTask: null,
     spaceId: '',
+    scope: AppTriggerScope.USER,
+    userId: '',
     language: 'zh-CN',
     i18n: () => ({}),
 });
@@ -183,13 +199,34 @@ function _waitChildrenReady(maxTries = 20): Promise<boolean> {
 // 组装 & 提交
 // ============================================================
 
-/** 从 cron 表达式解析出 TimeOfDay */
-function _cronToTimeOfDay(cron: string): { Hour: number; Minute: number } {
+/**
+ * 从 cron 表达式解析出 HH:mm 字符串。
+ * ⚠️ proto `DailySchedule.time_of_day` / `WeeklyTime.time_of_day` 是字符串（校验正则
+ * `^([0-1][0-9]|2[0-3]):[0-5][0-9]$`），不是 `{Hour, Minute}` 对象。
+ * 之前误传对象会被后端 validate 拒（"invalid TimeOfDay" 类错误）。
+ */
+function _cronToTimeOfDay(cron: string): string {
     const parts = (cron || '').trim().split(/\s+/);
-    if (parts.length >= 2) {
-        return { Hour: Number(parts[1]) || 0, Minute: Number(parts[0]) || 0 };
-    }
-    return { Hour: 9, Minute: 0 };
+    const minute = Number(parts[0]) || 0;
+    const hour = Number(parts[1]) || 0;
+    const h = Math.min(23, Math.max(0, hour));
+    const m = Math.min(59, Math.max(0, minute));
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/**
+ * 拼 ISO8601 时间字符串（proto `IntervalSchedule.start_at` / `OnceSchedule.fire_time`）。
+ * date + time 为本地时区（Asia/Shanghai 默认）时的墙钟时间，这里追加本地时区偏移，
+ * 得到形如 `2026-07-23T09:00:00+08:00` 的严格 ISO8601 字符串，避免歧义。
+ */
+function _toIso8601(date: string, time: string): string {
+    if (!date || !time) return '';
+    const offsetMin = -new Date().getTimezoneOffset();
+    const sign = offsetMin >= 0 ? '+' : '-';
+    const abs = Math.abs(offsetMin);
+    const oh = String(Math.floor(abs / 60)).padStart(2, '0');
+    const om = String(abs % 60).padStart(2, '0');
+    return `${date}T${time}:00${sign}${oh}:${om}`;
 }
 
 function _buildSchedule(freq: ReturnType<NonNullable<typeof frequencySelectorRef.value>['getFormData']>) {
@@ -199,6 +236,7 @@ function _buildSchedule(freq: ReturnType<NonNullable<typeof frequencySelectorRef
     switch (freq.type) {
         case 'daily':
             schedule.ScheduleType = TimerScheduleType.DAILY;
+            // proto DailySchedule.time_of_day 是 HH:mm 字符串
             schedule.Daily = { TimeOfDay: _cronToTimeOfDay(freq.cron || '') };
             break;
         case 'weekly':
@@ -207,6 +245,7 @@ function _buildSchedule(freq: ReturnType<NonNullable<typeof frequencySelectorRef
                 Times: (freq.weekDays || []).map((day) => ({
                     // proto 1..7 表示周一..周日
                     Weekday: day === 0 ? 7 : day,
+                    // proto WeeklyTime.time_of_day 是 HH:mm 字符串
                     TimeOfDay: _cronToTimeOfDay(freq.cron || ''),
                 })),
             };
@@ -215,16 +254,16 @@ function _buildSchedule(freq: ReturnType<NonNullable<typeof frequencySelectorRef
             schedule.ScheduleType = TimerScheduleType.INTERVAL;
             schedule.Interval = {
                 Value: freq.intervalValue || 1,
-                // 1 = HOUR
+                // 1 = INTERVAL_UNIT_HOUR
                 Unit: 1,
-                StartAt:
-                    freq.startDate && freq.startTime ? `${freq.startDate}T${freq.startTime}:00` : '',
+                // proto 要求 ISO8601 且 min_len=1，带上时区偏移
+                StartAt: _toIso8601(freq.startDate || '', freq.startTime || ''),
             };
             break;
         case 'once':
             schedule.ScheduleType = TimerScheduleType.ONCE;
             schedule.Once = {
-                FireTime: freq.date && freq.time ? `${freq.date}T${freq.time}:00` : '',
+                FireTime: _toIso8601(freq.date || '', freq.time || ''),
             };
             break;
         case 'cron':
@@ -233,15 +272,51 @@ function _buildSchedule(freq: ReturnType<NonNullable<typeof frequencySelectorRef
             break;
         default:
             schedule.ScheduleType = TimerScheduleType.DAILY;
-            schedule.Daily = { TimeOfDay: { Hour: 9, Minute: 0 } };
+            schedule.Daily = { TimeOfDay: '09:00' };
     }
     return schedule;
 }
 
-function _buildPushConfig(pushData: { channel: number; webhookUrl: string }) {
-    const config: Record<string, any> = { PushChannel: pushData.channel || TimerPushChannel.NONE };
-    if (pushData.channel === TimerPushChannel.WECOM_BOT) {
-        config.WecomBot = { WebhookUrl: pushData.webhookUrl || '' };
+/**
+ * 根据 push_channel 语义映射 push_target_type。
+ *
+ * proto 定义（time_scheduler.proto）:
+ *   - TIMER_PUSH_CHANNEL_WECHAT       → target 为公众号 openid → USER(1)
+ *   - TIMER_PUSH_CHANNEL_WECOM_BOT    → target 为企微 chat_id  → CHAT(2)
+ *   - TIMER_PUSH_CHANNEL_WECOM_WEBHOOK→ 走 webhook_url，无目标 → UNSPECIFIED(0)
+ *   - TIMER_PUSH_CHANNEL_NONE / UNSPECIFIED → UNSPECIFIED(0)
+ *
+ * 该映射由 proto 语义唯一决定，任何 channel 新增/调整都应同步这里。
+ */
+function _resolvePushTargetType(channel: TimerPushChannelValue): number {
+    switch (channel) {
+        case TimerPushChannel.WECHAT:
+            return TimerPushTargetType.USER;
+        case TimerPushChannel.WECOM_BOT:
+            return TimerPushTargetType.CHAT;
+        // WECOM_WEBHOOK / NONE / UNSPECIFIED
+        default:
+            return TimerPushTargetType.UNSPECIFIED;
+    }
+}
+
+/**
+ * 构造 push_config（对齐 proto TimerPushConfig）
+ * - PushChannel:    1 NONE / 2 WECHAT / 3 WECOM_BOT / 4 WECOM_WEBHOOK
+ * - PushTargetType: 由 channel 语义映射（见 _resolvePushTargetType）
+ * - PushTargetId:   选中的会话 ID（openid / chat_id）
+ */
+function _buildPushConfig(pushData: {
+    channel: TimerPushChannelValue;
+    targetId: string;
+}) {
+    const channel = pushData.channel || TimerPushChannel.NONE;
+    const config: Record<string, any> = {
+        PushChannel: channel,
+        PushTargetType: _resolvePushTargetType(channel),
+    };
+    if (channel !== TimerPushChannel.NONE) {
+        config.PushTargetId = pushData.targetId || '';
     }
     return config;
 }
@@ -292,11 +367,16 @@ async function handleConfirm() {
 
             const updateMask: ModifyAppTriggerPayload = {
                 TriggerId: triggerId,
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
                 Trigger: {
                     TriggerName: taskName.value.trim(),
                     TriggerConfig: { ScheduledConfig: { Schedule: _buildSchedule(freqData) } },
-                    ExecuteConfig: { PromptConfig: { ExecutePrompt: promptData.ExecutePrompt } },
+                    ExecuteConfig: {
+                        PromptConfig: {
+                            ExecutePrompt: promptData.ExecutePrompt,
+                        },
+                    },
                     PushConfig: _buildPushConfig(pushData),
                 },
                 UpdateMask: {
@@ -321,8 +401,13 @@ async function handleConfirm() {
                 ExecuteType: executeType,
                 PushConfig: _buildPushConfig(pushData),
                 TriggerConfig: { ScheduledConfig: { Schedule: _buildSchedule(freqData) } },
-                ExecuteConfig: { PromptConfig: { ExecutePrompt: promptData.ExecutePrompt } },
-                Scope: AppTriggerScope.APP,
+                ExecuteConfig: {
+                    PromptConfig: {
+                        ExecutePrompt: promptData.ExecutePrompt,
+                    },
+                },
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             };
             await createAppTrigger(payload, props.applicationId);
             MessagePlugin.success(i18n.value.createSuccess);
@@ -365,7 +450,7 @@ async function fillFormWithTask(task: TimerTaskSummary | TimerTask) {
         // 优先调新 AppTrigger 接口
         let detail: any = null;
         try {
-            detail = await describeAppTrigger(triggerId, props.applicationId, AppTriggerScope.APP);
+            detail = await describeAppTrigger(triggerId, props.applicationId, props.scope, undefined, props.userId);
         } catch {
             // 回退：旧 TimerTask 接口（存量数据兼容）
             const { describeTimerTask } = await import('../../../service/cronTaskApi');
@@ -435,6 +520,28 @@ defineExpose({ resetForm, fillFormWithTask });
     max-height: min(450px, calc(100vh - 240px));
     overflow-y: auto;
     position: relative;
+}
+
+/* 自定义滚动条：对齐系统其他面板（CronTaskPanel .panel-body / chat-overrides） */
+.cron-create-task-dialog__body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.cron-create-task-dialog__body::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.cron-create-task-dialog__body::-webkit-scrollbar-thumb {
+    border-radius: var(--td-radius-default);
+    background: transparent;
+}
+
+.cron-create-task-dialog__body:hover::-webkit-scrollbar-thumb {
+    background: var(--td-scrollbar-color);
+}
+
+.cron-create-task-dialog__body:hover::-webkit-scrollbar-thumb:hover {
+    background: var(--td-scrollbar-hover-color);
 }
 
 .cron-create-task-dialog__form-item {

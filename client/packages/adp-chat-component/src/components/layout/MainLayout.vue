@@ -309,7 +309,6 @@ defineExpose({
     justify-content: space-between;
     align-items: center;
     height: 56px;
-    border-bottom: 1px solid var(--td-component-stroke);
 }
 .header-app-settings{
     display: flex;

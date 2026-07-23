@@ -75,6 +75,8 @@ export interface SideI18n {
   switchApplication?: string
   /** 渠道展开列表按钮文案 */
   channelList?: string
+  /** 定时任务列表项「更多操作」菜单-查看详情文案 */
+  viewCronTaskDetail?: string
 }
 
 /** 聊天国际化文本 */
@@ -294,6 +296,7 @@ export const defaultSideI18n: Required<SideI18n> = {
   remoteTerminalSetting: '渠道设置',
   switchApplication: '切换应用',
   channelList: '展开列表',
+  viewCronTaskDetail: '查看详情',
 }
 
 /** 聊天 i18n 默认值 */
@@ -420,6 +423,7 @@ export const defaultSideI18nEn: Required<SideI18n> = {
   remoteTerminalSetting: 'Channel settings',
   switchApplication: 'Switch Application',
   channelList: 'Expand list',
+  viewCronTaskDetail: 'View details',
 }
 
 /** 聊天 i18n 英文默认值 */

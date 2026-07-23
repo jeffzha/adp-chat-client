@@ -5,6 +5,8 @@
             ref="panelRef"
             :application-id="applicationId"
             :space-id="spaceId"
+            :scope="scope"
+            :user-id="userId"
             :theme="theme"
             :language="language"
             :i18n="props.i18n"
@@ -19,6 +21,8 @@
             :task="currentTask"
             :application-id="applicationId"
             :space-id="spaceId"
+            :scope="scope"
+            :user-id="userId"
             :theme="theme"
             :language="language"
             :i18n="props.i18n"
@@ -41,6 +45,7 @@ import type {
     TimerTask,
     TimerTaskSummary,
 } from '../../model/cronTask';
+import { AppTriggerScope } from '../../model/appTrigger';
 
 export interface Option { label: string; value: string }
 
@@ -49,6 +54,14 @@ export interface Props extends ThemeProps {
     applicationId: string;
     /** @deprecated AppTrigger 不再依赖 spaceId，保留以兼容旧调用方 */
     spaceId?: string;
+    /**
+     * 触发器作用域，proto AppTriggerScope。
+     * - USER(2)：C 端访客，默认；需同时传 userId。
+     * - APP(1)：B 端管理员，user_id 可省略。
+     */
+    scope?: number;
+    /** C 端访客 ID；scope=USER 时必填 */
+    userId?: string;
     /** 语言 */
     language?: string;
     /** i18n 覆盖 */
@@ -62,6 +75,8 @@ export interface Props extends ThemeProps {
 const props = withDefaults(defineProps<Props>(), {
     ...themePropsDefaults,
     spaceId: '',
+    scope: AppTriggerScope.USER,
+    userId: '',
     language: 'zh-CN',
     i18n: () => ({}),
     pageSize: 20,

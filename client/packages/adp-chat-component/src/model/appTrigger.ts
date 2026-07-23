@@ -119,6 +119,12 @@ export interface AppTriggerPromptExecuteConfig {
     ExecutePrompt: string;
     /** API 参数绑定（本次不实现，留空） */
     ParamBindingsApi?: AppTriggerParamBindingConfig;
+    /**
+     * 模型 ID（按 webim 惯例透传扩展字段）
+     * proto AppTriggerPromptExecuteConfig 未显式定义，
+     * 后端识别则消费、不识别则忽略。
+     */
+    ModelId?: string;
 }
 
 /** 参数绑定配置（预留） */

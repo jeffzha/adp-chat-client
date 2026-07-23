@@ -45,12 +45,14 @@
             </span>
         </div>
 
-        <!-- 底部：操作按钮 -->
+        <!-- 底部：操作按钮
+             对齐 webim：pause/resume/edit/delete 使用 v-button size=small（默认带边框），
+             不再是 text 无边框按钮。截图中每个按钮都有一层浅灰边框。 -->
         <div class="card-actions">
             <t-tooltip v-if="taskStatus === TimerTaskStatus.ACTIVE" :content="i18n.pause" placement="top">
                 <t-button
                     size="small"
-                    variant="text"
+                    variant="outline"
                     shape="square"
                     :disabled="actionLoading"
                     @click.stop="emit('pause', task)"
@@ -67,7 +69,7 @@
             <t-tooltip v-else-if="taskStatus === TimerTaskStatus.PAUSED" :content="i18n.resume" placement="top">
                 <t-button
                     size="small"
-                    variant="text"
+                    variant="outline"
                     shape="square"
                     :disabled="actionLoading"
                     @click.stop="emit('resume', task)"
@@ -84,7 +86,7 @@
             <t-tooltip :content="i18n.edit" placement="top">
                 <t-button
                     size="small"
-                    variant="text"
+                    variant="outline"
                     shape="square"
                     :disabled="actionLoading"
                     @click.stop="emit('edit', task)"
@@ -101,7 +103,7 @@
             <t-tooltip :content="i18n.del" placement="top">
                 <t-button
                     size="small"
-                    variant="text"
+                    variant="outline"
                     shape="square"
                     :disabled="actionLoading"
                     @click.stop="emit('delete', task)"
@@ -117,7 +119,6 @@
             </t-tooltip>
             <t-button
                 size="small"
-                theme="primary"
                 variant="outline"
                 :disabled="actionLoading"
                 :loading="actionLoading"
@@ -256,7 +257,8 @@ function onCardClick() {
 }
 
 .cron-task-card:hover {
-    border-color: var(--td-brand-color);
+    /* 对齐 webim：hover 时用中性色略深边框 + 淡阴影，不使用品牌色高亮，避免过强视觉干扰 */
+    border-color: var(--td-border-level-3-color, rgba(17, 32, 70, 0.2));
     box-shadow: var(--td-shadow-1);
 }
 
@@ -310,7 +312,8 @@ function onCardClick() {
     background: var(--td-text-color-disabled);
 }
 
-/* 标签行 */
+/* 标签行
+   对齐 webim：时间 tag 只占内容宽度（不撑满剩余空间），后接成功/失败计数 tag。 */
 .card-tags {
     display: flex;
     align-items: center;
@@ -320,9 +323,12 @@ function onCardClick() {
     overflow: hidden;
 }
 
+/* 时间 tag：内容宽 + 灰底 + 圆角，不撑满剩余空间（对齐设计图 pill 外观）。
+   过长时省略号截断。 */
 .card-tags__time {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     min-width: 0;
+    max-width: 100%;
     display: inline-flex;
     align-items: center;
     gap: var(--td-size-2);
@@ -336,7 +342,7 @@ function onCardClick() {
 }
 
 .card-tags__time-text {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -354,6 +360,16 @@ function onCardClick() {
     line-height: 18px;
 }
 
+/* 让时间 tag（或 t-tooltip 包裹它的 wrapper span）占据剩余空间的左端，
+   把后续的计数标签推到卡片右侧。
+   注意：不能用 .card-tags__count:first-of-type，因为 t-tooltip 会在
+   .card-tags 里插入一个 <span> wrapper，导致按标签名匹配 :first-of-type
+   实际命中的是 wrapper 而非 count 元素。这里改用相邻兄弟选择器，
+   凡是紧跟在时间 tag（或其 wrapper）后面的第一个 count，都吸到右侧。 */
+.card-tags > :first-child {
+    margin-right: auto;
+}
+
 .card-tags__count--success {
     color: var(--td-success-color);
     background: var(--td-success-color-light);
@@ -364,12 +380,13 @@ function onCardClick() {
     background: var(--td-error-color-light);
 }
 
-/* 底部操作 */
+/* 底部操作
+   对齐 webim：按钮之间较小间距（8px），末尾"立即执行"稍作分隔。 */
 .card-actions {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: var(--td-size-3);
+    gap: var(--td-size-4);
     margin-top: auto;
 }
 </style>

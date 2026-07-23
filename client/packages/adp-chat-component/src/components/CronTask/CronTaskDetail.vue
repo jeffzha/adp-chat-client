@@ -11,8 +11,8 @@
                     :theme="theme"
                 />
             </span>
-            <span class="cron-task-detail__title">
-                {{ i18n.executionRecordTitle }}
+            <span class="cron-task-detail__title" :title="taskDisplayName">
+                {{ taskDisplayName }}
             </span>
         </div>
 
@@ -45,7 +45,7 @@
                         <t-button
                             v-if="taskStatus === TimerTaskStatus.ACTIVE"
                             size="small"
-                            variant="text"
+                            variant="outline"
                             :disabled="actionLoading"
                             @click="handlePause"
                         >
@@ -57,7 +57,7 @@
                         <t-button
                             v-else-if="taskStatus === TimerTaskStatus.PAUSED"
                             size="small"
-                            variant="text"
+                            variant="outline"
                             :disabled="actionLoading"
                             @click="handleResume"
                         >
@@ -66,7 +66,7 @@
                             </template>
                             {{ i18n.resume }}
                         </t-button>
-                        <t-button size="small" variant="text" :disabled="actionLoading" @click="handleEdit">
+                        <t-button size="small" variant="outline" :disabled="actionLoading" @click="handleEdit">
                             <template #icon>
                                 <CustomizedIcon remote name="basic_edit_line" size="xxs" :theme="theme" />
                             </template>
@@ -74,8 +74,7 @@
                         </t-button>
                         <t-button
                             size="small"
-                            variant="text"
-                            theme="danger"
+                            variant="outline"
                             :disabled="actionLoading"
                             @click="handleDelete"
                         >
@@ -86,7 +85,7 @@
                         </t-button>
                         <t-button
                             size="small"
-                            theme="primary"
+                            variant="outline"
                             :loading="actionLoading"
                             @click="handleRunNow"
                         >
@@ -161,6 +160,8 @@
             :editing-task="editingTask"
             :application-id="applicationId"
             :space-id="spaceId"
+            :scope="scope"
+            :user-id="userId"
             :language="language"
             :i18n="props.i18n"
             @success="handleEditSuccess"
@@ -173,6 +174,8 @@
             :task="currentTask"
             :application-id="applicationId"
             :space-id="spaceId"
+            :scope="scope"
+            :user-id="userId"
             :language="language"
             :i18n="props.i18n"
             :theme="theme"
@@ -214,10 +217,12 @@ import {
     getPromptContent,
     getPolicySummary,
     getTaskStatus,
+    getTaskName,
     formatRelativeTime,
 } from '../../utils/cronTask';
 import {
     getTriggerId,
+    getTriggerName,
     getTriggerPolicySummary,
     getTriggerStatus,
     getTriggerPrompt,
@@ -231,6 +236,13 @@ interface Props extends ThemeProps {
     applicationId: string;
     /** @deprecated AppTrigger 不再依赖 spaceId，保留以兼容旧调用方 */
     spaceId?: string;
+    /**
+     * 触发器作用域（proto AppTriggerScope）。
+     * USER(2) = C 端访客，默认，需配合 userId；APP(1) = B 端管理员。
+     */
+    scope?: number;
+    /** C 端访客 ID，scope=USER 时必填 */
+    userId?: string;
     /** 语言 */
     language?: string;
     /** i18n 覆盖 */
@@ -243,6 +255,8 @@ const props = withDefaults(defineProps<Props>(), {
     ...themePropsDefaults,
     task: null,
     spaceId: '',
+    scope: AppTriggerScope.USER,
+    userId: '',
     language: 'zh-CN',
     i18n: () => ({}),
     pollInterval: 10 * 1000,
@@ -319,6 +333,19 @@ const scheduleDescription = computed(() => {
         : getPolicySummary(currentTask.value) || '—';
 });
 
+/**
+ * 详情页头部标题：显示当前任务/触发器名称。
+ * 兼容 AppTrigger（TriggerName）与旧 TimerTask（Profile.TaskName）两种数据源；
+ * 若名称为空，回退到 i18n.panelTitle（"定时任务"）而不是执行记录标题，
+ * 避免与右侧执行记录 sidebar 的"定时任务执行记录"文案混淆。
+ */
+const taskDisplayName = computed(() => {
+    const task = currentTask.value;
+    if (!task) return i18n.value.panelTitle;
+    const name = _isAppTrigger.value ? getTriggerName(task) : getTaskName(task);
+    return name || i18n.value.panelTitle;
+});
+
 // ============================================================
 // 日志渲染（兼容 TimerRunLog + AppTriggerRunLog）
 // ============================================================
@@ -377,6 +404,8 @@ const executionLogs = computed(() =>
 const hasUnread = computed(() => executionLogs.value.some((l: any) => !l.IsRead));
 
 function getLogStatusClass(status: number): string {
+    // 严格对齐 proto TimerRunStatus：0 UNSPECIFIED / 1 PENDING / 2 RUNNING /
+    // 3 RETRY_WAIT / 4 SUCCESS / 5 DEAD(失败) / 6 CANCELLED
     const map: Record<number, string> = {
         [TimerRunStatus.PENDING]: 'pending',
         [TimerRunStatus.RUNNING]: 'running',
@@ -389,13 +418,14 @@ function getLogStatusClass(status: number): string {
 }
 
 function getLogStatusText(status: number): string {
+    const en = props.language?.startsWith('en');
     const map: Record<number, string> = {
-        [TimerRunStatus.PENDING]: props.language?.startsWith('en') ? 'Pending' : '等待执行',
-        [TimerRunStatus.RUNNING]: props.language?.startsWith('en') ? 'Running' : '正在执行',
-        [TimerRunStatus.RETRY_WAIT]: props.language?.startsWith('en') ? 'Retrying' : '等待重试',
-        [TimerRunStatus.SUCCESS]: props.language?.startsWith('en') ? 'Success' : '执行成功',
-        [TimerRunStatus.DEAD]: props.language?.startsWith('en') ? 'Failed' : '执行失败',
-        [TimerRunStatus.CANCELLED]: props.language?.startsWith('en') ? 'Canceled' : '已取消',
+        [TimerRunStatus.PENDING]: en ? 'Pending' : '等待执行',
+        [TimerRunStatus.RUNNING]: en ? 'Running' : '执行中',
+        [TimerRunStatus.RETRY_WAIT]: en ? 'Retry Waiting' : '等待重试',
+        [TimerRunStatus.SUCCESS]: en ? 'Success' : '执行成功',
+        [TimerRunStatus.DEAD]: en ? 'Failed' : '执行失败',
+        [TimerRunStatus.CANCELLED]: en ? 'Cancelled' : '已取消',
     };
     return map[status] || '';
 }
@@ -406,7 +436,7 @@ function getLogStatusText(status: number): string {
 async function fetchTaskDetail(id: string) {
     try {
         // 优先调 AppTrigger 接口
-        const detail = await describeAppTrigger(id, props.applicationId, AppTriggerScope.APP);
+        const detail = await describeAppTrigger(id, props.applicationId, props.scope, undefined, props.userId);
         taskDetail.value = detail || null;
     } catch (e) {
         console.error('[CronTaskDetail] fetchTaskDetail failed:', e);
@@ -424,7 +454,8 @@ async function fetchRunLogs(id: string) {
                 TriggerId: id,
                 PageNumber: 1,
                 PageSize: pageSize.value,
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -451,7 +482,8 @@ async function loadMoreLogs() {
                 TriggerId: id,
                 PageNumber: nextPage,
                 PageSize: pageSize.value,
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -498,7 +530,8 @@ async function _pollRefreshLogs() {
                 TriggerId: id,
                 PageNumber: 1,
                 PageSize: totalSize,
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -551,7 +584,8 @@ async function markSingleLogRead(instanceId: string) {
             {
                 TriggerId: triggerId,
                 InstanceIdList: [instanceId],
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -579,7 +613,8 @@ async function handleMarkAllRead() {
             {
                 TriggerId: triggerId,
                 InstanceIdList: [],
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -601,7 +636,7 @@ async function handlePause() {
     if (!id) return;
     actionLoading.value = true;
     try {
-        await pauseAppTrigger(id, props.applicationId, AppTriggerScope.APP);
+        await pauseAppTrigger(id, props.applicationId, props.scope, undefined, props.userId);
         MessagePlugin.success(i18n.value.pauseSuccess);
         await fetchTaskDetail(id);
         emit('action-done', 'pause', currentTask.value);
@@ -619,7 +654,7 @@ async function handleResume() {
     actionLoading.value = true;
     try {
         // ⚠️ ResumeAppTriggerRsp 无 next_fire_time，需额外刷新详情
-        await resumeAppTrigger(id, props.applicationId, AppTriggerScope.APP);
+        await resumeAppTrigger(id, props.applicationId, props.scope, undefined, props.userId);
         MessagePlugin.success(i18n.value.resumeSuccess);
         await fetchTaskDetail(id);
         emit('action-done', 'resume', currentTask.value);
@@ -659,7 +694,7 @@ async function handleRunNow() {
     if (!id) return;
     actionLoading.value = true;
     try {
-        await runAppTriggerNow(id, props.applicationId, AppTriggerScope.APP);
+        await runAppTriggerNow(id, props.applicationId, props.scope, undefined, props.userId);
         MessagePlugin.success(i18n.value.runNowSuccess);
         await _pollRefreshLogs();
         _startPolling();
@@ -760,11 +795,14 @@ onBeforeUnmount(() => {
     margin-bottom: var(--td-size-5);
 }
 
+/* 提示词内容容器
+   对齐 webim：使用比 hover 更浅的中性底色（webim 为 rgba(36,56,97,.03)），
+   而非 container-hover 的 #f5f5f7 —— 后者在浅色主题下偏深，用户反馈"背景色太深"。 */
 .cron-task-detail__section-content {
     font-size: var(--td-font-size-body-medium);
     color: var(--td-text-color-secondary);
     line-height: var(--td-line-height-body-large);
-    background: var(--td-bg-color-container-hover);
+    background: var(--td-bg-color-page);
     border-radius: var(--td-radius-medium);
     padding: var(--td-size-5) var(--td-size-6);
     max-height: 156px;

@@ -200,6 +200,8 @@ const emit = defineEmits<{
     (e: 'sideAction', key: string, item: SideActionItem): void;
     /** 选中定时任务列表项 */
     (e: 'selectCronTask', item: SideGroupItem): void;
+    /** 定时任务列表项「更多操作」菜单选择（如查看详情） */
+    (e: 'cronTaskMenuSelect', payload: { value: string; item: SideGroupItem }): void;
     /** 选中远程终端列表项 */
     (e: 'selectRemoteTerminal', item: RemoteTerminalItem): void;
     /** 点击"远程终端"分组标题右侧的设置入口（如渠道设置） */
@@ -409,6 +411,16 @@ const handleSelectCronTask = (item: SideGroupItem) => {
     emit('selectCronTask', item);
 };
 
+/** 定时任务列表项「更多操作」菜单选项（当前仅"查看详情"，对齐 smart-webim cronTaskMenuOptions） */
+const cronTaskMenuOptions = computed(() => [
+    { label: i18n.value.viewCronTaskDetail || '查看详情', value: 'detail' },
+]);
+
+/** 定时任务列表项「更多操作」菜单选择：透传给父层 */
+const handleCronTaskMenuSelect = (payload: { value: string; item: SideGroupItem }) => {
+    emit('cronTaskMenuSelect', payload);
+};
+
 /** 选中一个远程终端：透传给父层 */
 const handleSelectRemoteTerminal = (item: RemoteTerminalItem) => {
     emit('selectRemoteTerminal', item);
@@ -574,13 +586,22 @@ defineExpose({
                             @setting="handleRemoteTerminalSetting"
                             @loaded="handleRemoteTerminalLoaded"
                         />
+                        <!--
+                          定时任务分组（对齐 smart-webim task-group）：
+                            1. hide-when-empty：list 为空时整组（含标题）不渲染，即"无定时任务时不显示该菜单"
+                            2. collapsible：支持点击标题「下拉收起」列表体
+                        -->
                         <SideGroupList
                             v-if="showCronTaskList && isClawApplication"
                             :title="i18n.cronTask || '定时任务'"
                             :items="cronTaskItems"
                             :active-id="currentCronTaskId"
                             :theme="theme"
+                            :hide-when-empty="true"
+                            collapsible
+                            :menu-options="cronTaskMenuOptions"
                             @select="handleSelectCronTask"
+                            @menu-select="handleCronTaskMenuSelect"
                         />
                         <HistoryList
                             :conversations="displayConversations"

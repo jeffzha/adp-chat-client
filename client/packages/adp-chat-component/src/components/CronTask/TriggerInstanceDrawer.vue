@@ -132,6 +132,13 @@ interface Props {
     visible: boolean;
     instanceId: string;
     applicationId: string;
+    /**
+     * 触发器作用域（proto AppTriggerScope）。
+     * USER(2) = C 端访客，默认，需配合 userId；APP(1) = B 端管理员。
+     */
+    scope?: number;
+    /** C 端访客 ID，scope=USER 时必填 */
+    userId?: string;
     language?: string;
     i18n?: Partial<AppTriggerI18n>;
 }
@@ -140,6 +147,8 @@ const props = withDefaults(defineProps<Props>(), {
     visible: false,
     instanceId: '',
     applicationId: '',
+    scope: AppTriggerScope.USER,
+    userId: '',
     language: 'zh-CN',
     i18n: () => ({}),
 });
@@ -177,7 +186,9 @@ watch(
             instance.value = await describeAppTriggerInstance(
                 id,
                 props.applicationId,
-                AppTriggerScope.APP,
+                props.scope,
+                undefined,
+                props.userId,
             );
         } catch (e) {
             console.error('[TriggerInstanceDrawer] load failed:', e);

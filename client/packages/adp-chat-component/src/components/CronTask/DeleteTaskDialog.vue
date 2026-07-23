@@ -34,6 +34,13 @@ interface Props extends ThemeProps {
     task?: TimerTask | TimerTaskSummary | Record<string, any> | null;
     applicationId: string;
     spaceId?: string;
+    /**
+     * 触发器作用域（proto AppTriggerScope）。
+     * USER(2) = C 端访客，默认，需配合 userId；APP(1) = B 端管理员。
+     */
+    scope?: number;
+    /** C 端访客 ID，scope=USER 时必填 */
+    userId?: string;
     language?: string;
     i18n?: Partial<CronTaskI18n>;
 }
@@ -43,6 +50,8 @@ const props = withDefaults(defineProps<Props>(), {
     visible: false,
     task: null,
     spaceId: '',
+    scope: AppTriggerScope.USER,
+    userId: '',
     language: 'zh-CN',
     i18n: () => ({}),
 });
@@ -76,7 +85,7 @@ async function onConfirm() {
     }
     loading.value = true;
     try {
-        await deleteAppTrigger(id, props.applicationId, AppTriggerScope.APP);
+        await deleteAppTrigger(id, props.applicationId, props.scope, undefined, props.userId);
         MessagePlugin.success(mergedI18n.value.deleteSuccess);
         emit('success', props.task);
         emit('update:visible', false);

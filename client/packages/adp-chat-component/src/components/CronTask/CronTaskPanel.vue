@@ -4,7 +4,7 @@
         <div class="panel-header">
             <div class="header-left">
                 <span class="panel-title">{{ i18n.panelTitle }}</span>
-                <t-tooltip :content="i18n.empty" placement="bottom">
+                <t-tooltip :content="i18n.panelTip" placement="bottom">
                     <span class="help-icon">
                         <CustomizedIcon
                             remote
@@ -18,20 +18,26 @@
             </div>
         </div>
 
-        <!-- 操作条 -->
+        <!-- 操作条：新建按钮（直接打开手动新建弹框） -->
         <div class="panel-action-bar">
-            <t-button theme="primary" @click="onManualCreate">
-                <template #icon>
-                    <CustomizedIcon
-                        remote
-                        name="basic_new_line"
-                        size="xxs"
-                        :show-hover-bg="false"
-                        :theme="theme"
-                    />
-                </template>
-                {{ i18n.createManual }}
-            </t-button>
+            <div class="create-menu-trigger">
+                <t-button
+                    theme="primary"
+                    class="create-menu-trigger__button"
+                    @click="onManualCreate"
+                >
+                    <template #icon>
+                        <CustomizedIcon
+                            remote
+                            name="basic_new_line"
+                            size="xxs"
+                            :show-hover-bg="false"
+                            :theme="theme"
+                        />
+                    </template>
+                    <span class="create-menu-trigger__text">{{ i18n.createTask }}</span>
+                </t-button>
+            </div>
         </div>
 
         <!-- 卡片列表 -->
@@ -43,11 +49,20 @@
 
             <!-- 空状态 -->
             <div v-else-if="list.length === 0" class="empty-state">
+                <CustomizedIcon
+                    remote
+                    nativeIcon
+                    name="default_wait"
+                    class="empty-icon"
+                    :show-hover-bg="false"
+                    :theme="theme"
+                />
                 <p class="empty-text">
                     {{ i18n.empty }}
                     <span class="empty-text--highlight" @click="onManualCreate">
-                        {{ i18n.createManual }}
+                        {{ i18n.createTask }}
                     </span>
+                    {{ i18n.emptySuffix }}
                 </p>
             </div>
 
@@ -82,6 +97,8 @@
             :editing-task="editingTask"
             :application-id="applicationId"
             :space-id="spaceId"
+            :scope="scope"
+            :user-id="userId"
             :theme="theme"
             :language="language"
             :i18n="i18n"
@@ -95,6 +112,8 @@
             :task="deletingTask"
             :application-id="applicationId"
             :space-id="spaceId"
+            :scope="scope"
+            :user-id="userId"
             :theme="theme"
             :language="language"
             :i18n="i18n"
@@ -141,6 +160,13 @@ export interface Props extends ThemeProps {
     applicationId: string;
     /** @deprecated AppTrigger 不再依赖 spaceId，保留以兼容旧调用方 */
     spaceId?: string;
+    /**
+     * 触发器作用域（proto AppTriggerScope）。
+     * USER(2) = C 端访客，默认，需配合 userId；APP(1) = B 端管理员。
+     */
+    scope?: number;
+    /** C 端访客 ID，scope=USER 时必填；APP 场景留空即可 */
+    userId?: string;
     /** 语言 */
     language?: string;
     /** i18n 覆盖 */
@@ -152,6 +178,8 @@ export interface Props extends ThemeProps {
 const props = withDefaults(defineProps<Props>(), {
     ...themePropsDefaults,
     spaceId: '',
+    scope: AppTriggerScope.USER,
+    userId: '',
     language: 'zh-CN',
     i18n: () => ({}),
     pageSize: 20,
@@ -202,7 +230,8 @@ async function fetchList() {
             {
                 PageNumber: 1,
                 PageSize: props.pageSize,
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -228,7 +257,8 @@ async function fetchMore() {
             {
                 PageNumber: next,
                 PageSize: props.pageSize,
-                Scope: AppTriggerScope.APP,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
@@ -260,7 +290,8 @@ async function refreshAfterAction() {
                     {
                         PageNumber: p,
                         PageSize: props.pageSize,
-                        Scope: AppTriggerScope.APP,
+                        Scope: props.scope,
+                        ...(props.userId ? { UserId: props.userId } : {}),
                     },
                     props.applicationId,
                 ),
@@ -329,7 +360,7 @@ async function onPause(task: any) {
     const id = getEntityId(task);
     operatingTaskId.value = id;
     try {
-        await pauseAppTrigger(id, props.applicationId, AppTriggerScope.APP);
+        await pauseAppTrigger(id, props.applicationId, props.scope, undefined, props.userId);
         MessagePlugin.success(i18n.value.pauseSuccess);
         await refreshAfterAction();
     } catch (e) {
@@ -345,7 +376,7 @@ async function onResume(task: any) {
     operatingTaskId.value = id;
     try {
         // ⚠️ ResumeAppTriggerRsp 无 next_fire_time 返回，详情页需补偿刷新
-        await resumeAppTrigger(id, props.applicationId, AppTriggerScope.APP);
+        await resumeAppTrigger(id, props.applicationId, props.scope, undefined, props.userId);
         MessagePlugin.success(i18n.value.resumeSuccess);
         await refreshAfterAction();
     } catch (e) {
@@ -371,7 +402,7 @@ async function onRunNow(task: any) {
     operatingTaskId.value = id;
     try {
         // 新版返回 instanceId，旧版返回 { LogId, SessionId }
-        await runAppTriggerNow(id, props.applicationId, AppTriggerScope.APP);
+        await runAppTriggerNow(id, props.applicationId, props.scope, undefined, props.userId);
         MessagePlugin.success(i18n.value.runNowSuccess);
         emit('run-and-view', task);
         await refreshAfterAction();
@@ -449,11 +480,33 @@ defineExpose({
     flex-shrink: 0;
 }
 
+.create-menu-trigger {
+    display: inline-flex;
+    padding-bottom: var(--td-size-2);
+}
+
+/* 主按钮：图标与文字之间 4px 间距，图标强制白色（对齐 webim） */
+.create-menu-trigger__button :deep(.t-button__text) {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--td-size-1);
+}
+
+.create-menu-trigger__button :deep(.t-icon),
+.create-menu-trigger__button :deep(svg) {
+    color: var(--td-text-color-anti);
+    fill: currentColor;
+}
+
+.create-menu-trigger__text {
+    line-height: 1;
+}
+
 /* 内容区 */
 .panel-body {
     flex: 1;
     overflow-y: auto;
-    padding: 0 var(--td-size-8) var(--td-size-6);
+    padding: 0 var(--td-size-8);
 }
 
 .panel-body::-webkit-scrollbar {
@@ -480,7 +533,12 @@ defineExpose({
     align-items: center;
     justify-content: center;
     height: 100%;
-    min-height: 320px;
+}
+
+.empty-icon {
+    width: 160px;
+    height: 160px;
+    margin-bottom: var(--td-size-8);
 }
 
 .empty-text {
@@ -494,26 +552,15 @@ defineExpose({
 .empty-text--highlight {
     color: var(--td-brand-color);
     cursor: pointer;
-    margin-left: var(--td-size-2);
+    margin: 0 var(--td-size-1);
 }
 
-/* 卡片网格 */
+/* 卡片网格：宽度自适应，卡片最小宽度 300px；
+   面板越宽自动排更多列，窄屏自动降为 2/1 列。 */
 .task-card-list {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: var(--td-size-6);
-}
-
-@media (max-width: 900px) {
-    .task-card-list {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
-@media (max-width: 600px) {
-    .task-card-list {
-        grid-template-columns: 1fr;
-    }
 }
 
 /* 加载更多 */

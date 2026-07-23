@@ -6,11 +6,19 @@
     组件本身不关心业务语义，仅负责渲染 + 事件外抛，具体数据 / 图标 / 激活态由父层决定。
 -->
 <script setup lang="ts">
-import { computed } from 'vue';
-import { Icon as TIcon } from 'tdesign-vue-next';
+import { computed, ref, watch } from 'vue';
+import { Icon as TIcon, Dropdown as TDropdown } from 'tdesign-vue-next';
 import CustomizedIcon from '../CustomizedIcon.vue';
 import type { ThemeProps } from '../../model/type';
 import { themePropsDefaults } from '../../model/type';
+
+/** 分组列表项「更多操作」菜单选项（对齐 smart-webim task-group menuOptions） */
+export interface SideGroupMenuOption {
+    /** 菜单项显示文案 */
+    label: string;
+    /** 菜单项值，随 menuSelect 事件回传 */
+    value: string;
+}
 
 /** 分组列表项 */
 export interface SideGroupItem {
@@ -57,6 +65,18 @@ interface Props extends ThemeProps {
      * 不传则使用默认「暂无数据」。
      */
     emptyText?: string;
+    /**
+     * 是否支持点击标题「下拉收起」列表（对齐 smart-webim task-group）。
+     * 默认 true —— 有数据时标题右侧出现折叠箭头，点击标题折叠 / 展开列表体。
+     */
+    collapsible?: boolean;
+    /** 初始是否折叠（仅 collapsible=true 时生效），默认展开 */
+    defaultCollapsed?: boolean;
+    /**
+     * 列表项 hover 时右侧「更多操作」三点菜单选项（对齐 smart-webim task-group show-more-btn + menu-options）。
+     * 不传或为空数组则不显示三点菜单。点击某项后通过 menuSelect 事件回传 { value, item }。
+     */
+    menuOptions?: SideGroupMenuOption[];
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -68,6 +88,9 @@ const props = withDefaults(defineProps<Props>(), {
     headerActionIcon: '',
     headerActionTip: '',
     emptyText: '暂无数据',
+    collapsible: true,
+    defaultCollapsed: false,
+    menuOptions: () => [],
 });
 
 const emit = defineEmits<{
@@ -77,15 +100,47 @@ const emit = defineEmits<{
     (e: 'delete', item: SideGroupItem): void;
     /** 点击分组标题右侧的「设置 / 添加」入口 */
     (e: 'headerAction'): void;
+    /** 折叠状态变更 */
+    (e: 'toggleCollapse', collapsed: boolean): void;
+    /** 选择某项「更多操作」菜单项 */
+    (e: 'menuSelect', payload: { value: string; item: SideGroupItem }): void;
 }>();
+
+/** 是否启用「更多操作」三点菜单 */
+const hasMenu = computed(() => props.menuOptions.length > 0);
+
+/** TDesign Dropdown options 结构（content 为展示文案，value 随点击回传） */
+const dropdownOptions = computed(() =>
+    props.menuOptions.map((opt) => ({ content: opt.label, value: opt.value })),
+);
+
+/** 折叠状态：受控于 defaultCollapsed 初值，之后由自身维护 */
+const collapsed = ref(props.defaultCollapsed);
+watch(
+    () => props.defaultCollapsed,
+    (val) => {
+        collapsed.value = val;
+    },
+);
 
 const shouldRender = computed(() => {
     if (props.hideWhenEmpty && props.items.length === 0) return false;
     return true;
 });
 
-const handleClick = (item: SideGroupItem) => {
+/** 点击标题：折叠 / 展开列表体（无数据时不响应，避免空组也能折叠） */
+const toggleCollapse = () => {
+    if (!props.collapsible || props.items.length === 0) return;
+    collapsed.value = !collapsed.value;
+    emit('toggleCollapse', collapsed.value);
+};
+
+const handleClick = (item: SideGroupItem, event?: MouseEvent) => {
     if (item.disabled) return;
+    // 点击「更多操作」三点按钮时不触发列表项选中（该按钮由 TDropdown 自行处理开合，
+    // 故不能在其上 stopPropagation，否则 Dropdown 无法展开，只能在此按 target 过滤）
+    const target = event?.target as HTMLElement | null;
+    if (target?.closest?.('.side-group-item__more')) return;
     emit('select', item);
 };
 
@@ -99,12 +154,49 @@ const handleHeaderAction = (event: Event) => {
     event.stopPropagation();
     emit('headerAction');
 };
+
+/** 选择某项「更多操作」菜单项：回传菜单值与所属列表项 */
+const handleMenuSelect = (value: string, item: SideGroupItem) => {
+    if (item.disabled) return;
+    emit('menuSelect', { value, item });
+};
+
+/**
+ * 当前处于「更多操作」菜单展开态的列表项 id。
+ * 用于在下拉菜单展开期间强制保持该项的三点按钮可见——否则鼠标移到浮层菜单上时，
+ * 列表项失去 hover，三点按钮 display:none，触发元素消失导致菜单被关闭、点不到菜单项。
+ */
+const openMenuItemId = ref('');
+
+/** 下拉浮层显隐变化：记录/清除当前展开态的列表项 id */
+const handleMenuVisibleChange = (visible: boolean, item: SideGroupItem) => {
+    openMenuItemId.value = visible ? item.id : '';
+};
 </script>
 
 <template>
     <div v-if="shouldRender" class="side-group-list">
-        <div class="side-group-header">
-            <span class="side-group-header__title">{{ title }}</span>
+        <div class="side-group-header" :class="{ collapsed }">
+            <span
+                class="side-group-header__title-wrap"
+                :class="{ 'is-collapsible': collapsible && items.length > 0 }"
+                role="button"
+                tabindex="0"
+                @click="toggleCollapse"
+                @keydown.enter.prevent="toggleCollapse"
+                @keydown.space.prevent="toggleCollapse"
+            >
+                <span class="side-group-header__title">{{ title }}</span>
+                <CustomizedIcon
+                    v-if="collapsible && items.length > 0"
+                    name="arrow_down_small_line"
+                    remote
+                    size="xs"
+                    :theme="theme"
+                    :show-hover-bg="false"
+                    class="side-group-header__caret"
+                />
+            </span>
             <span
                 v-if="headerActionIcon"
                 class="side-group-header__action"
@@ -123,44 +215,67 @@ const handleHeaderAction = (event: Event) => {
                 />
             </span>
         </div>
-        <div
-            v-for="item in items"
-            :key="item.id"
-            class="side-group-item"
-            :class="{
-                active: activeId === item.id,
-                'is-disabled': item.disabled,
-            }"
-            @click="handleClick(item)"
-        >
-            <CustomizedIcon
-                v-if="item.icon"
-                :name="item.icon"
-                :remote="item.iconRemote !== false"
-                size="xs"
-                :theme="theme"
-                :show-hover-bg="false"
-                class="side-group-item__icon"
-            />
-            <div class="side-group-item__label" :title="item.label">{{ item.label }}</div>
-            <span
-                v-if="showDelete && !item.disabled"
-                class="side-group-item__delete"
-                aria-label="删除"
-                role="button"
-                tabindex="0"
-                @click="handleDeleteClick($event, item)"
-                @keydown.enter.stop.prevent="handleDeleteClick($event, item)"
+        <div v-show="!collapsed" class="side-group-body">
+            <div
+                v-for="item in items"
+                :key="item.id"
+                class="side-group-item"
+                :class="{
+                    active: activeId === item.id,
+                    'is-disabled': item.disabled,
+                    'menu-open': openMenuItemId === item.id,
+                }"
+                @click="handleClick(item, $event)"
             >
-                <TIcon name="delete" size="14px" />
-            </span>
-            <span v-else-if="item.extraText" class="side-group-item__extra">
-                {{ item.extraText }}
-            </span>
-        </div>
-        <!-- 空态占位：仅当 hideWhenEmpty=false 且 items 为空时展示 -->
-        <div v-if="items.length === 0" class="side-group-empty">
-            {{ emptyText }}
+                <CustomizedIcon
+                    v-if="item.icon"
+                    :name="item.icon"
+                    :remote="item.iconRemote !== false"
+                    size="xs"
+                    :theme="theme"
+                    :show-hover-bg="false"
+                    class="side-group-item__icon"
+                />
+                <div class="side-group-item__label" :title="item.label">{{ item.label }}</div>
+                <span
+                    v-if="showDelete && !item.disabled"
+                    class="side-group-item__delete"
+                    aria-label="删除"
+                    role="button"
+                    tabindex="0"
+                    @click="handleDeleteClick($event, item)"
+                    @keydown.enter.stop.prevent="handleDeleteClick($event, item)"
+                >
+                    <TIcon name="delete" size="14px" />
+                </span>
+                <!-- 更多操作三点菜单：hover / active 时显示（对齐 smart-webim task-group）。
+                     注意：不能在触发按钮上 stopPropagation，否则 TDropdown(trigger=click) 无法展开；
+                     列表项选中已在 handleClick 内按 .side-group-item__more target 过滤规避。 -->
+                <TDropdown
+                    v-else-if="hasMenu && !item.disabled"
+                    :options="dropdownOptions"
+                    trigger="click"
+                    placement="bottom-right"
+                    :popup-props="{ onVisibleChange: (v: boolean) => handleMenuVisibleChange(v, item) }"
+                    @click="(data) => handleMenuSelect(String(data.value), item)"
+                >
+                    <span
+                        class="side-group-item__more"
+                        aria-label="更多操作"
+                        role="button"
+                        tabindex="0"
+                    >
+                        <TIcon name="ellipsis" size="16px" />
+                    </span>
+                </TDropdown>
+                <span v-if="item.extraText" class="side-group-item__extra">
+                    {{ item.extraText }}
+                </span>
+            </div>
+            <!-- 空态占位：仅当 hideWhenEmpty=false 且 items 为空时展示 -->
+            <div v-if="items.length === 0" class="side-group-empty">
+                {{ emptyText }}
+            </div>
         </div>
     </div>
 </template>
@@ -196,6 +311,44 @@ const handleHeaderAction = (event: Event) => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* 标题点击热区：包住标题文案 + 折叠箭头，仅可折叠时给手型 */
+.side-group-header__title-wrap {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    border-radius: var(--td-radius-small);
+    user-select: none;
+}
+
+.side-group-header__title-wrap.is-collapsible {
+    cursor: pointer;
+}
+
+.side-group-header__title-wrap:focus-visible {
+    outline: 2px solid var(--td-brand-color);
+    outline-offset: 1px;
+}
+
+/* 折叠箭头：默认隐藏，hover 标题或已折叠时显示；折叠态旋转 -90° */
+.side-group-header__caret {
+    flex-shrink: 0;
+    margin-left: var(--td-size-2);
+    color: var(--td-text-color-placeholder);
+    opacity: 0;
+    transition: opacity 0.15s ease, transform 0.2s ease;
+}
+
+.side-group-header__title-wrap:hover .side-group-header__caret,
+.side-group-header.collapsed .side-group-header__caret {
+    opacity: 1;
+}
+
+.side-group-header.collapsed .side-group-header__caret {
+    transform: rotate(-90deg);
 }
 
 .side-group-header__action {
@@ -306,6 +459,37 @@ const handleHeaderAction = (event: Event) => {
 }
 
 .side-group-item__delete:focus-visible {
+    outline: 2px solid var(--td-brand-color);
+    outline-offset: 1px;
+}
+
+/* 更多操作三点按钮：默认隐藏，hover / active 时显示（与删除按钮一致的显隐规则） */
+.side-group-item__more {
+    flex-shrink: 0;
+    margin-left: var(--td-size-4);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--td-radius-small);
+    color: var(--td-text-color-placeholder);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.side-group-item:hover .side-group-item__more,
+.side-group-item.active .side-group-item__more,
+.side-group-item.menu-open .side-group-item__more {
+    display: inline-flex;
+}
+
+.side-group-item__more:hover {
+    background: var(--td-bg-color-container-active);
+    color: var(--td-text-color-primary);
+}
+
+.side-group-item__more:focus-visible {
     outline: 2px solid var(--td-brand-color);
     outline-offset: 1px;
 }
