@@ -40,8 +40,13 @@ import type { ThemeProps } from '../model/type';
 export interface Props extends ThemeProps {
     /** SVG图标的名称，对应 src/assets/icons 目录下的文件名（不含扩展名） */
     name: string;
-    /** 图标尺寸，可选值：'xxs' | 'xs' | 's' | 'm' | 'l' | 'xl' */
-    size?: 'xxs' | 'xs' | 's' | 'm' | 'l' | 'xl';
+    /**
+     * 图标尺寸：
+     * - 命名档位：'xxs' | 'xs' | 's' | 'm' | 'l' | 'xl'（走 scoped size-* 类，含内边距）
+     * - 数字/数字字符串（如 160 或 '160'）：按像素设置宽高，使用内联 style（优先级高于任何
+     *   scoped 类，不会被 size-* 或外部类覆盖），且不带内边距
+     */
+    size?: 'xxs' | 'xs' | 's' | 'm' | 'l' | 'xl' | number | `${number}`;
     /** 是否使用原生图标样式（不应用主题滤镜），适用于彩色图标 */
     nativeIcon?: boolean;
     /** hover是否显示背景色 */
@@ -136,7 +141,6 @@ const svgMap: Record<string, string> = {
 // 用于生成唯一 id 的计数器
 let idCounter = 0;
 
-
 const props = withDefaults(defineProps<Props>(), {
   size: 'm',
   nativeIcon: false,
@@ -151,15 +155,35 @@ const props = withDefaults(defineProps<Props>(), {
 const ICONFONT_SVG_URL = new URL('../assets/icons/remote/iconfont.svg', import.meta.url).href;
 
 /*
+ * 是否为数字（像素）尺寸：支持 number 或纯数字字符串（如 '160'）
+ * 数字尺寸走内联 style，命名档位（'m' 等）走 scoped size-* 类
+ */
+const isNumericSize = computed(
+    () => typeof props.size === 'number' || /^\d+$/.test(String(props.size ?? '')),
+);
+
+/*
+ * 数字尺寸对应的内联宽高（px）。内联 style 优先级高于任何 scoped 类选择器，
+ * 因此不会被组件内 .customeized-icon.size-m 或外部类（如 .empty-icon）覆盖。
+ */
+const sizeStyle = computed((): Record<string, string> => {
+    if (!isNumericSize.value) return {};
+    const px = `${parseInt(String(props.size), 10)}px`;
+    return { width: px, height: px };
+});
+
+/*
  * 计算外层 span 的内联样式
  * - nativeIcon: 不应用 color
  * - 显式传入 color: 直接使用原始值（CSS color 属性原生支持 var() 解析）
+ * - 数字尺寸: 追加宽高（优先级高于 scoped 类）
  */
 const iconStyle = computed(() => {
+    const base: Record<string, string> = { ...sizeStyle.value };
     if (props.color && !props.nativeIcon) {
-        return { color: props.color };
+        base.color = props.color;
     }
-    return {};
+    return base;
 });
 
 /*
@@ -261,7 +285,7 @@ function processSvg(content: string, isNative: boolean): string {
             'showHoverBg': showHoverBg,
             'normal': !nativeIcon,
             'svg-dark-mode': theme === 'dark',
-            [`size-${size}`]: size 
+            [`size-${size}`]: size && !isNumericSize
         }"
         :style="iconStyle"
         aria-hidden="true"
@@ -275,7 +299,7 @@ function processSvg(content: string, isNative: boolean): string {
             'showHoverBg': showHoverBg,
             'normal': !nativeIcon,
             'svg-dark-mode': theme === 'dark',
-            [`size-${size}`]: size 
+            [`size-${size}`]: size && !isNumericSize
         }"
         :style="iconStyle"
         aria-hidden="true"

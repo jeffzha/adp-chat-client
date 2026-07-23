@@ -162,7 +162,7 @@ function _findChannel(pc: TimerPushChannelValue): ChannelItem | null {
     const matched = channelList.value.filter((c) => c.channelType === chType);
     if (matched.length === 0) return null;
     const active = matched.find((c) => c.connectStatus === ClawChannelStatus.SUCCESS);
-    return active || matched[0];
+    return active || matched[0] || null;
 }
 
 /** 未绑定（渠道列表中无该类型 或 该类型未成功连接）→ 禁用 */

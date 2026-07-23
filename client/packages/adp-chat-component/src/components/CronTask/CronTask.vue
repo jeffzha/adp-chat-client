@@ -11,10 +11,13 @@
             :language="language"
             :i18n="props.i18n"
             :page-size="pageSize"
+            :create-conversation-text="createConversationText"
             @select-task="handleSelectTask"
             @run-and-view="onRunAndView"
             @optimize-prompt="onOptimizePrompt"
             @refresh="onRefresh"
+            @toggle-sidebar="emit('toggle-sidebar')"
+            @create-conversation="emit('create-conversation')"
         />
         <CronTaskDetail
             v-else-if="currentView === 'detail'"
@@ -70,6 +73,8 @@ export interface Props extends ThemeProps {
     pageSize?: number;
     /** 详情页运行日志轮询间隔（ms） */
     pollInterval?: number;
+    /** 新建对话按钮的 tooltip 文案（对齐主区 header 的"新建对话"） */
+    createConversationText?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -81,6 +86,7 @@ const props = withDefaults(defineProps<Props>(), {
     i18n: () => ({}),
     pageSize: 20,
     pollInterval: 10 * 1000,
+    createConversationText: '',
 });
 
 const emit = defineEmits<{
@@ -90,6 +96,10 @@ const emit = defineEmits<{
     (e: 'switch-to-chat', payload: { task: any; triggerId?: string; sessionId?: string; logId?: string; userId?: string }): void;
     (e: 'action-done', action: string, task: any): void;
     (e: 'view-change', view: 'list' | 'detail'): void;
+    /** 收起/展开侧边栏（对齐主区 header 的收起按钮） */
+    (e: 'toggle-sidebar'): void;
+    /** 新建对话（对齐主区 header 的新建对话按钮） */
+    (e: 'create-conversation'): void;
 }>();
 
 // ============================================================

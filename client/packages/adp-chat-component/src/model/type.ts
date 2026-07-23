@@ -211,6 +211,8 @@ export interface FilePreviewI18n {
   download?: string
   /** 开始下载提示（{name} 为文件名占位符） */
   downloadStarted?: string
+  /** 文件列表为空时的提示文本 */
+  emptyFile?: string
 }
 
 /** 侧边栏布局 Props */
@@ -399,6 +401,7 @@ export const defaultFilePreviewI18n: Required<FilePreviewI18n> = {
   unsupported: '暂不支持预览该文件格式',
   download: '下载',
   downloadStarted: '开始下载: {name}',
+  emptyFile: '暂无文件',
 }
 
 // ============================================================
@@ -526,6 +529,7 @@ export const defaultFilePreviewI18nEn: Required<FilePreviewI18n> = {
   unsupported: 'This file format is not supported for preview',
   download: 'Download',
   downloadStarted: 'Downloading: {name}',
+  emptyFile: 'No files',
 }
 
 /** 根据语言获取 i18n 默认值 */

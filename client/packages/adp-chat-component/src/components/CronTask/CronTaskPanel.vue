@@ -3,6 +3,13 @@
         <!-- 标题栏 -->
         <div class="panel-header">
             <div class="header-left">
+                <!-- 收起菜单 + 新建对话：对齐主区 header（定时任务面板遮住了主区 header，故在此补齐同款入口） -->
+                <SidebarToggle :theme="theme" @toggle="emit('toggle-sidebar')" />
+                <CreateConversation
+                    :tooltip-text="createConversationText || undefined"
+                    :theme="theme"
+                    @create="emit('create-conversation')"
+                />
                 <span class="panel-title">{{ i18n.panelTitle }}</span>
                 <t-tooltip :content="i18n.panelTip" placement="bottom">
                     <span class="help-icon">
@@ -54,6 +61,7 @@
                     nativeIcon
                     name="default_wait"
                     class="empty-icon"
+                    size="160"
                     :show-hover-bg="false"
                     :theme="theme"
                 />
@@ -131,6 +139,8 @@ import {
     MessagePlugin,
 } from 'tdesign-vue-next';
 import CustomizedIcon from '../CustomizedIcon.vue';
+import SidebarToggle from '../SidebarToggle.vue';
+import CreateConversation from '../CreateConversation.vue';
 import CronTaskCard from './CronTaskCard.vue';
 import CreateTaskDialog from './CreateTaskDialog/CreateTaskDialog.vue';
 import DeleteTaskDialog from './DeleteTaskDialog.vue';
@@ -173,6 +183,8 @@ export interface Props extends ThemeProps {
     i18n?: Partial<CronTaskI18n>;
     /** 每页大小 */
     pageSize?: number;
+    /** 新建对话按钮的 tooltip 文案（对齐主区 header 的"新建对话"） */
+    createConversationText?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -183,6 +195,7 @@ const props = withDefaults(defineProps<Props>(), {
     language: 'zh-CN',
     i18n: () => ({}),
     pageSize: 20,
+    createConversationText: '',
 });
 
 const emit = defineEmits<{
@@ -190,6 +203,10 @@ const emit = defineEmits<{
     (e: 'run-and-view', task: TimerTaskSummary | TimerTask): void;
     (e: 'optimize-prompt', content: string): void;
     (e: 'refresh'): void;
+    /** 收起/展开侧边栏（对齐主区 header 的收起按钮） */
+    (e: 'toggle-sidebar'): void;
+    /** 新建对话（对齐主区 header 的新建对话按钮） */
+    (e: 'create-conversation'): void;
 }>();
 
 const i18n = computed<Required<CronTaskI18n>>(() => ({
@@ -507,23 +524,25 @@ defineExpose({
     flex: 1;
     overflow-y: auto;
     padding: 0 var(--td-size-8);
+    /* 滚动条：对齐 tcadp 统一样式（SideLayout/chat-overrides） */
+    scrollbar-color: var(--td-scrollbar-color) transparent;
+    scrollbar-width: thin;
 }
 
 .panel-body::-webkit-scrollbar {
     width: 6px;
-}
-
-.panel-body::-webkit-scrollbar-track {
     background: transparent;
 }
 
 .panel-body::-webkit-scrollbar-thumb {
-    border-radius: var(--td-radius-default);
-    background: transparent;
+    border: 1.5px solid transparent;
+    background-clip: content-box;
+    background-color: var(--td-scrollbar-color);
+    border-radius: var(--td-radius-round);
 }
 
-.panel-body:hover::-webkit-scrollbar-thumb {
-    background: var(--td-scrollbar-color);
+.panel-body::-webkit-scrollbar-thumb:hover {
+    background-color: var(--td-scrollbar-hover-color);
 }
 
 /* 空状态 */
@@ -536,8 +555,7 @@ defineExpose({
 }
 
 .empty-icon {
-    width: 160px;
-    height: 160px;
+    /* 宽高由 CustomizedIcon size="160" 内联控制，这里只保留间距 */
     margin-bottom: var(--td-size-8);
 }
 

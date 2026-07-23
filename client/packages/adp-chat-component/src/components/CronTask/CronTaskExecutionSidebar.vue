@@ -58,6 +58,8 @@ interface Props extends ThemeProps {
     pageSize?: number;
     /** 轮询间隔（ms），0 表示不轮询 */
     pollInterval?: number;
+    /** 是否为移动端：移动端改为右侧抽屉 + 背景模糊遮罩，点击遮罩关闭；PC 端保持右推面板 */
+    isMobile?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -72,6 +74,7 @@ const props = withDefaults(defineProps<Props>(), {
     activeLogId: '',
     pageSize: 20,
     pollInterval: 10 * 1000,
+    isMobile: false,
 });
 
 const emit = defineEmits<{
@@ -428,7 +431,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div v-if="visible" class="cron-exec-sidebar">
+    <template v-if="visible">
+        <!-- 移动端毛玻璃遮罩：点击关闭抽屉（对齐 sider 移动端 .mobile-overlay） -->
+        <div v-if="isMobile" class="ces-backdrop" @click="emit('close')"></div>
+    <div class="cron-exec-sidebar" :class="{ 'cron-exec-sidebar--mobile': isMobile }">
         <!-- Header：固定"定时任务执行记录"标题 + 未读时展示"全部已读" + 刷新 + 关闭 -->
         <div class="ces-header">
             <span class="ces-header__title" :title="headerTitle">{{ headerTitle }}</span>
@@ -511,6 +517,7 @@ onBeforeUnmount(() => {
             </div>
         </div>
     </div>
+    </template>
 </template>
 
 <style scoped>
@@ -525,6 +532,41 @@ onBeforeUnmount(() => {
     border-left: 1px solid var(--td-component-border);
     background: var(--td-bg-color-container);
     flex-shrink: 0;
+}
+
+/* ---------------- 移动端：右侧抽屉 + 背景模糊遮罩（对齐 sider 移动端行为） ---------------- */
+.ces-backdrop {
+    position: absolute;
+    inset: 0;
+    background: var(--td-mask-disabled);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 99;
+    animation: ces-backdrop-fade-in 0.2s ease;
+}
+
+.cron-exec-sidebar--mobile {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    height: 100%;
+    width: 85%;
+    min-width: 0;
+    max-width: 320px;
+    z-index: 100;
+    box-shadow: var(--td-shadow-3, -2px 0 12px rgba(0, 0, 0, 0.12));
+    animation: ces-drawer-slide-in 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes ces-backdrop-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes ces-drawer-slide-in {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
 }
 
 /* ---------------- Header：对齐 webim .detail-header 16px 20px + 底部分隔线 ---------------- */
@@ -637,23 +679,25 @@ onBeforeUnmount(() => {
     padding: 0 var(--td-size-5);
     display: flex;
     flex-direction: column;
+    /* 滚动条：对齐 tcadp 统一样式（SideLayout/chat-overrides） */
+    scrollbar-color: var(--td-scrollbar-color) transparent;
+    scrollbar-width: thin;
 }
 
 .ces-list::-webkit-scrollbar {
-    width: 4px;
-}
-
-.ces-list::-webkit-scrollbar-track {
+    width: 6px;
     background: transparent;
 }
 
 .ces-list::-webkit-scrollbar-thumb {
-    border-radius: var(--td-radius-small);
-    background: transparent;
+    border: 1.5px solid transparent;
+    background-clip: content-box;
+    background-color: var(--td-scrollbar-color);
+    border-radius: var(--td-radius-round);
 }
 
-.ces-list:hover::-webkit-scrollbar-thumb {
-    background: var(--td-scrollbar-color);
+.ces-list::-webkit-scrollbar-thumb:hover {
+    background-color: var(--td-scrollbar-hover-color);
 }
 
 /* ---------------- 列表项：对齐 webim .task-list-panel__item

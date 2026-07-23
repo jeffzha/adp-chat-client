@@ -90,6 +90,7 @@ const props = withDefaults(defineProps<Props>(), {
     downloadText: '下载',
     downloadStartedText: '开始下载: {name}',
     loadingText: '加载中...',
+    emptyText: '暂无文件',
 });
 
 const emit = defineEmits<{
@@ -349,6 +350,24 @@ onBeforeUnmount(() => {
     padding: var(--td-comp-paddingTB-xxl) 0;
     color: var(--td-text-color-secondary);
     font-size: var(--td-font-size-body-small);
+}
+
+/* 空状态：对齐 webim FileTree/EmptyData（占满、垂直居中的插画 + 灰字提示） */
+.file-dir-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: var(--td-comp-margin-xl, 16px);
+}
+
+/* 插画尺寸由 CustomizedIcon size="120" 内联控制（优先级高于 scoped size-* 类） */
+.file-dir-empty__text {
+    margin: 0;
+    font-size: var(--td-font-size-body-small, 13px);
+    line-height: var(--td-line-height-body-small);
+    color: var(--td-text-color-placeholder);
 }
 
 :deep(.t-tree__item) {

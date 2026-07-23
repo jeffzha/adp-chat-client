@@ -93,6 +93,7 @@ import type {
     TimerTask,
     TimerTaskSummary,
     TimerPushChannelValue,
+    TimerScheduleConfig,
 } from '../../../model/cronTask';
 import {
     TimerScheduleType,
@@ -274,7 +275,7 @@ function _buildSchedule(freq: ReturnType<NonNullable<typeof frequencySelectorRef
             schedule.ScheduleType = TimerScheduleType.DAILY;
             schedule.Daily = { TimeOfDay: '09:00' };
     }
-    return schedule;
+    return schedule as TimerScheduleConfig;
 }
 
 /**

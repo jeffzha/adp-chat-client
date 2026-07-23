@@ -56,6 +56,8 @@ interface Props extends ThemeProps {
     pageSize?: number;
     /** 轮询间隔（ms），0 表示不轮询 */
     pollInterval?: number;
+    /** 是否为移动端：移动端改为右侧抽屉 + 背景模糊遮罩，点击遮罩关闭；PC 端保持右推面板 */
+    isMobile?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -70,6 +72,7 @@ const props = withDefaults(defineProps<Props>(), {
     describeConversationListApi: '',
     pageSize: 50,
     pollInterval: 10000,
+    isMobile: false,
 });
 
 const emit = defineEmits<{
@@ -233,7 +236,10 @@ defineExpose({
 </script>
 
 <template>
-    <div v-if="visible" class="channel-conversation-panel">
+    <template v-if="visible">
+        <!-- 移动端毛玻璃遮罩：点击关闭抽屉（对齐 sider 移动端 .mobile-overlay） -->
+        <div v-if="isMobile" class="ccp-backdrop" @click="emit('close')"></div>
+    <div class="channel-conversation-panel" :class="{ 'channel-conversation-panel--mobile': isMobile }">
         <!-- Header：结构对齐 FileDir header（title + refresh + close） -->
         <div class="ccp-header">
             <span class="ccp-header__title">{{ panelTitle }}</span>
@@ -291,6 +297,7 @@ defineExpose({
             </div>
         </div>
     </div>
+    </template>
 </template>
 
 <style scoped>
@@ -305,6 +312,41 @@ defineExpose({
     border-left: 1px solid var(--td-border-level-1-color);
     background: var(--td-bg-color-container);
     flex-shrink: 0;
+}
+
+/* ---------------- 移动端：右侧抽屉 + 背景模糊遮罩（对齐 sider 移动端行为） ---------------- */
+.ccp-backdrop {
+    position: absolute;
+    inset: 0;
+    background: var(--td-mask-disabled);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 99;
+    animation: ccp-backdrop-fade-in 0.2s ease;
+}
+
+.channel-conversation-panel--mobile {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    height: 100%;
+    width: 85%;
+    min-width: 0;
+    max-width: 320px;
+    z-index: 100;
+    box-shadow: var(--td-shadow-3, -2px 0 12px rgba(0, 0, 0, 0.12));
+    animation: ccp-drawer-slide-in 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes ccp-backdrop-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes ccp-drawer-slide-in {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
 }
 
 /* ---------------- Header（对齐 .file-dir-header） ---------------- */
@@ -364,6 +406,25 @@ defineExpose({
     flex: 1;
     overflow-y: auto;
     padding: var(--td-comp-paddingTB-s) var(--td-comp-paddingLR-s);
+    /* 滚动条：对齐 tcadp 统一样式（SideLayout/chat-overrides） */
+    scrollbar-color: var(--td-scrollbar-color) transparent;
+    scrollbar-width: thin;
+}
+
+.ccp-body::-webkit-scrollbar {
+    width: 6px;
+    background: transparent;
+}
+
+.ccp-body::-webkit-scrollbar-thumb {
+    border: 1.5px solid transparent;
+    background-clip: content-box;
+    background-color: var(--td-scrollbar-color);
+    border-radius: var(--td-radius-round);
+}
+
+.ccp-body::-webkit-scrollbar-thumb:hover {
+    background-color: var(--td-scrollbar-hover-color);
 }
 
 .ccp-loading {
