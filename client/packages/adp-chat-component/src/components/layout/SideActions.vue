@@ -16,7 +16,7 @@
 import { computed } from 'vue';
 import CustomizedIcon from '../CustomizedIcon.vue';
 import type { ThemeProps, SideI18n } from '../../model/type';
-import { themePropsDefaults, defaultSideI18n } from '../../model/type';
+import { themePropsDefaults, defaultSideI18n, defaultSideI18nEn } from '../../model/type';
 
 /** 快捷入口项 */
 export interface SideActionItem {
@@ -50,6 +50,8 @@ interface Props extends ThemeProps {
     showChannelList?: boolean;
     /** 侧边栏国际化文本（用于默认按钮文案） */
     i18n?: SideI18n;
+    /** 当前语言标识（如 'zh-CN'、'en-US'），用于选择内部默认 i18n */
+    language?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -59,6 +61,7 @@ const props = withDefaults(defineProps<Props>(), {
     showCronTask: true,
     showChannelList: false,
     i18n: () => ({}),
+    language: 'zh-CN',
 });
 
 const emit = defineEmits<{
@@ -66,9 +69,9 @@ const emit = defineEmits<{
     (e: 'action', key: string, item: SideActionItem): void;
 }>();
 
-/** 合并默认 i18n */
+/** 合并默认 i18n：按 language 选中/英默认，再叠加外部 props.i18n */
 const mergedI18n = computed<Required<SideI18n>>(() => ({
-    ...defaultSideI18n,
+    ...(props.language?.startsWith('en') ? defaultSideI18nEn : defaultSideI18n),
     ...props.i18n,
 }));
 
@@ -98,7 +101,7 @@ const displayItems = computed<SideActionItem[]>(() => {
     if (props.showChannelList) {
         list.push({
             key: 'channel-list',
-            label: mergedI18n.value.channelList || '展开列表',
+            label: mergedI18n.value.channelList,
             icon: 'basic_time_line',
             remote: true,
             iconSize: 'xs',

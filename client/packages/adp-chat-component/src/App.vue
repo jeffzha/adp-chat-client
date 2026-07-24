@@ -8,6 +8,7 @@ import type { FileProps } from './model/file';
 import { ScoreValue } from './model/chat-v2';
 import type { ApiConfig } from './service/api';
 import { defaultApiDetailConfig } from './service/api';
+import { setLanguage } from './service/httpService';
 import { getMessage, type MessageCode } from './model/messages';
 import { normalizeWidth, normalizeHeight } from './utils/device';
 import type { 
@@ -114,7 +115,7 @@ const props = withDefaults(defineProps<Props>(), {
     isOpen: undefined,
     onOpenChange: undefined,
     showToggleButton: true,
-    aiWarningText: '内容由AI生成，仅供参考',
+    aiWarningText: '',
     apiConfig: () => ({ apiDetailConfig: defaultApiDetailConfig }),
     autoLoad: true,
 });
@@ -253,6 +254,13 @@ const actualTheme = computed(() => {
     return result;
 });
 const actualLanguageOptions = computed(() => props.languageOptions);
+/** 当前活跃语言：外部 onChangeLanguage 回调存在时走 internalLanguage（外部会同步回传），否则走 internalLanguage */
+const actualLanguage = computed(() => internalLanguage.value);
+/** 语言变化时同步到 httpService，确保后续 API 请求自动带上 Language header */
+watch(actualLanguage, (lang) => {
+    setLanguage(lang);
+}, { immediate: true });
+
 const actualIsSidePanelOverlay = computed(() => props.isSidePanelOverlay);
 const actualLogoUrl = computed(() => props.logoUrl);
 const actualLogoTitle = computed(() => props.logoTitle);
@@ -293,6 +301,7 @@ const actualAutoLoad = computed(() => props.autoLoad);
                 :isChatting="actualIsChatting"
                 :user="actualUser"
                 :theme="actualTheme"
+                :language="actualLanguage"
                 :languageOptions="actualLanguageOptions"
                 :isOverlay="actualIsOverlay"
                 :width="actualWidth"

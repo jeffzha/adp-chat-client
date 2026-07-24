@@ -175,14 +175,14 @@ function getLogStatusClass(status: number): string {
     return map[status] || 'pending';
 }
 function getLogStatusText(status: number): string {
-    const en = props.language?.startsWith('en');
+    const i18n = mergedI18n.value;
     const map: Record<number, string> = {
-        [TimerRunStatus.PENDING]: en ? 'Pending' : '等待执行',
-        [TimerRunStatus.RUNNING]: en ? 'Running' : '执行中',
-        [TimerRunStatus.RETRY_WAIT]: en ? 'Retry Waiting' : '等待重试',
-        [TimerRunStatus.SUCCESS]: en ? 'Success' : '执行成功',
-        [TimerRunStatus.DEAD]: en ? 'Failed' : '执行失败',
-        [TimerRunStatus.CANCELLED]: en ? 'Cancelled' : '已取消',
+        [TimerRunStatus.PENDING]: i18n.runStatusPending,
+        [TimerRunStatus.RUNNING]: i18n.runStatusRunning,
+        [TimerRunStatus.RETRY_WAIT]: i18n.runStatusRetryWait,
+        [TimerRunStatus.SUCCESS]: i18n.runStatusSuccess,
+        [TimerRunStatus.DEAD]: i18n.runStatusFailed,
+        [TimerRunStatus.CANCELLED]: i18n.runStatusCancelled,
     };
     return map[status] || '';
 }
@@ -207,7 +207,10 @@ const executionLogs = computed<ExecutionLog[]>(() =>
             logId: getLogInstanceId(log),
             conversationId: getLogConversationId(log),
             userId: getLogUserId(log),
-            timeLabel: formatRelativeTime(getLogTriggerTime(log)),
+            timeLabel: formatRelativeTime(getLogTriggerTime(log), {
+                today: mergedI18n.value.today,
+                daysAgo: mergedI18n.value.daysAgo,
+            }),
             statusClass: getLogStatusClass(status),
             statusText: getLogStatusText(status),
             content: getLogContent(log),
@@ -448,7 +451,7 @@ onBeforeUnmount(() => {
                     <TIcon v-if="markingAllRead" name="loading" class="icon-spinning" />
                     <span v-else>{{ mergedI18n.markAllRead }}</span>
                 </span>
-                <span class="ces-header__action" :title="'刷新'" @click="handleRefresh">
+                <span class="ces-header__action" :title="mergedI18n.refresh" @click="handleRefresh">
                     <CustomizedIcon
                         remote
                         size="xs"
@@ -458,7 +461,7 @@ onBeforeUnmount(() => {
                         :theme="theme"
                     />
                 </span>
-                <span class="ces-header__action" :title="'关闭'" @click="emit('close')">
+                <span class="ces-header__action" :title="mergedI18n.close" @click="emit('close')">
                     <CustomizedIcon
                         remote
                         size="xs"

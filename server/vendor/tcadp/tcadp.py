@@ -484,6 +484,7 @@ class TCADP(BaseVendor):
         response_key: str = None,
         raise_on_error: bool = True,
         variables: dict = None,
+        language: str = None,
     ) -> dict:
         """通用腾讯云 API 转发方法（公开接口）
 
@@ -511,7 +512,7 @@ class TCADP(BaseVendor):
             payload = {}
 
         logging.info(f'[TCADP.forward_request] action={action}, payload={payload}')
-        resp = await tc_request(self.tc_config(), action, payload, service, version, variables=variables, action_overrides=self._action_overrides)
+        resp = await tc_request(self.tc_config(), action, payload, service, version, variables=variables, action_overrides=self._action_overrides, language=language)
         response = resp.get('Response', resp)
 
         if 'Error' in response:

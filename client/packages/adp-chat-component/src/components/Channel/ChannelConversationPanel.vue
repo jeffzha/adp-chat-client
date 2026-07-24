@@ -21,6 +21,11 @@ import type { CapiConversationItem } from '../../service/api';
 import CustomizedIcon from '../CustomizedIcon.vue';
 import type { ThemeProps } from '../../model/type';
 import { themePropsDefaults } from '../../model/type';
+import {
+    type ChannelSettingsI18n,
+    defaultChannelSettingsI18n,
+    defaultChannelSettingsI18nEn,
+} from '../../model/channel';
 
 interface ConversationItem {
     /** 会话 ID */
@@ -58,6 +63,10 @@ interface Props extends ThemeProps {
     pollInterval?: number;
     /** 是否为移动端：移动端改为右侧抽屉 + 背景模糊遮罩，点击遮罩关闭；PC 端保持右推面板 */
     isMobile?: boolean;
+    /** 语言 */
+    language?: string;
+    /** i18n 覆盖 */
+    i18n?: Partial<ChannelSettingsI18n>;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -73,6 +82,8 @@ const props = withDefaults(defineProps<Props>(), {
     pageSize: 50,
     pollInterval: 10000,
     isMobile: false,
+    language: 'zh-CN',
+    i18n: () => ({}),
 });
 
 const emit = defineEmits<{
@@ -84,6 +95,14 @@ const emit = defineEmits<{
     (e: 'loaded', items: ConversationItem[]): void;
 }>();
 
+/** 合并 i18n */
+const mergedI18n = computed<Required<ChannelSettingsI18n>>(() => {
+    const defaults = props.language?.startsWith('en')
+        ? defaultChannelSettingsI18nEn
+        : defaultChannelSettingsI18n;
+    return { ...defaults, ...props.i18n };
+});
+
 const loading = ref(false);
 const refreshing = ref(false);
 const conversations = ref<ConversationItem[]>([]);
@@ -93,7 +112,7 @@ let lastFetchId = 0;
 /** 轮询 timer */
 let pollingTimer: ReturnType<typeof setInterval> | null = null;
 
-const panelTitle = computed(() => (props.channelLabel ? `${props.channelLabel}会话` : '渠道会话'));
+const panelTitle = computed(() => (props.channelLabel ? `${props.channelLabel}${mergedI18n.value.ccpPanelTitle}` : mergedI18n.value.ccpPanelTitle));
 
 /**
  * 归一化 CAPI 返回项 → ConversationItem
@@ -109,7 +128,7 @@ const normalizeItem = (raw: CapiConversationItem): ConversationItem => {
     }
     return {
         id: raw.ConversationId || '',
-        title: (raw.Title as string) || '未命名',
+        title: (raw.Title as string) || mergedI18n.value.ccpUnnamed,
         lastActiveAt: ts,
     };
 };
@@ -217,15 +236,16 @@ const handleSelect = (conv: ConversationItem) => {
     // 不关闭面板，保持展开供用户继续切换（对齐 webim handleSelectChannelConversation）
 };
 
-/** 时间格式化：小于 1 分钟显示"刚刚"，小于 1 小时显示"N 分钟前"，小于 1 天显示"N 小时前"，超过 1 天显示"MM/DD" */
+/** 时间格式化：小于 1 分钟显示 i18n.justNow，小于 1 小时显示 i18n.minutesAgo，小于 1 天显示 i18n.hoursAgo，超过 1 天显示"MM/DD" */
 const formatTime = (ts: number): string => {
     if (!ts) return '';
     const d = new Date(ts);
     if (!Number.isFinite(d.getTime())) return '';
     const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
-    if (diffMin < 1) return '刚刚';
-    if (diffMin < 60) return `${diffMin}分钟前`;
-    if (diffMin < 1440) return `${Math.floor(diffMin / 60)}小时前`;
+    const i = mergedI18n.value;
+    if (diffMin < 1) return i.ccpJustNow;
+    if (diffMin < 60) return i.ccpMinutesAgo.replace('{n}', String(diffMin));
+    if (diffMin < 1440) return i.ccpHoursAgo.replace('{n}', String(Math.floor(diffMin / 60)));
     return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
 };
 
@@ -244,7 +264,7 @@ defineExpose({
         <div class="ccp-header">
             <span class="ccp-header__title">{{ panelTitle }}</span>
             <div class="ccp-header__actions">
-                <span class="ccp-header__action" :title="'刷新'" @click="handleRefresh">
+                <span class="ccp-header__action" :title="mergedI18n.ccpRefresh" @click="handleRefresh">
                     <CustomizedIcon
                         remote
                         size="xs"
@@ -254,7 +274,7 @@ defineExpose({
                         :theme="theme"
                     />
                 </span>
-                <span class="ccp-header__action" :title="'关闭'" @click="emit('close')">
+                <span class="ccp-header__action" :title="mergedI18n.ccpClose" @click="emit('close')">
                     <CustomizedIcon
                         remote
                         size="xs"
@@ -270,7 +290,7 @@ defineExpose({
         <div class="ccp-body">
             <div v-if="loading" class="ccp-loading">
                 <TIcon name="loading" class="icon-spinning" />
-                <span>加载中...</span>
+                <span>{{ mergedI18n.ccpLoading }}</span>
             </div>
             <div v-else-if="conversations.length === 0" class="ccp-empty">
                 <CustomizedIcon
@@ -281,7 +301,7 @@ defineExpose({
                     :showHoverBg="false"
                     :theme="theme"
                 />
-                <p class="ccp-empty__text">暂无会话</p>
+                <p class="ccp-empty__text">{{ mergedI18n.ccpEmpty }}</p>
             </div>
             <div v-else class="ccp-list">
                 <div

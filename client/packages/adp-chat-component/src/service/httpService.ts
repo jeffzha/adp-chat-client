@@ -4,6 +4,40 @@
  */
 import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse } from 'axios';
 
+// ============================================================
+// Language header 注入（对齐 gpt-demo ajax.js 的 Language header 注入模式）
+// ============================================================
+
+/**
+ * 当前语言标识，由 App.vue 通过 setLanguage() 同步。
+ * 默认 'zh-CN'，API 请求时自动注入为 HTTP Header `Language`。
+ */
+let currentLanguage = 'zh-CN';
+
+/**
+ * 设置当前语言，同时更新 axios 默认 headers 兜底（确保 configureAxios 重建实例后仍生效）。
+ * @param lang - 语言标识，如 'zh-CN'、'en-US'
+ */
+export const setLanguage = (lang: string) => {
+    currentLanguage = lang;
+    axiosInstance.defaults.headers.common['Language'] = lang;
+};
+
+/**
+ * 请求拦截器：在每次请求发出前注入 Language header。
+ * 优先级：config.headers.Language（业务方显式传） > 当前 currentLanguage。
+ */
+const injectLanguageHeader = (config: any) => {
+    if (!config.headers) {
+        config.headers = {};
+    }
+    // 若业务方已显式传入 Language，则保留；否则注入当前语言
+    if (!config.headers['Language']) {
+        config.headers['Language'] = currentLanguage;
+    }
+    return config;
+};
+
 // 默认配置
 const defaultConfig: AxiosRequestConfig = {
     timeout: 30000,
@@ -142,3 +176,11 @@ export const httpService = {
 };
 
 export default httpService;
+
+// ============================================================
+// 立即注册 Language header 注入拦截器
+// 同时推入 requestInterceptors 数组，确保 configureAxios() 重建 axios 实例时
+// 通过 applyStoredInterceptors 重新 apply。
+// ============================================================
+requestInterceptors.push({ onFulfilled: injectLanguageHeader });
+axiosInstance.interceptors.request.use(injectLanguageHeader, undefined);

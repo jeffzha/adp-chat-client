@@ -6,6 +6,8 @@
 import { computed } from 'vue';
 import { Loading as TLoading, Icon as TIcon } from 'tdesign-vue-next';
 import type { ChatConversation } from '../model/chat-v2';
+import type { SideI18n } from '../model/type';
+import { defaultSideI18n, defaultSideI18nEn } from '../model/type';
 
 interface Props {
     /** 会话列表 */
@@ -18,13 +20,25 @@ interface Props {
      * 由父组件基于 conversationRuntimeStates.isChatting 计算后传入
      */
     chattingConversationIds?: string[];
+    /** 侧边栏国际化文本（复用 SideI18n 中的 taskListTitle / inProgress / deleteConversation / daysAgo） */
+    i18n?: SideI18n;
+    /** 当前语言标识（如 'zh-CN'、'en-US'），用于选择内部默认 i18n */
+    language?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
     conversations: () => [],
     currentConversationId: '',
-    chattingConversationIds: () => []
+    chattingConversationIds: () => [],
+    i18n: () => ({}),
+    language: 'zh-CN',
 });
+
+/** 合并 i18n：外部覆盖 > 按 language 选中/英默认值 */
+const mergedI18n = computed<Required<SideI18n>>(() => ({
+    ...(props.language?.startsWith('en') ? defaultSideI18nEn : defaultSideI18n),
+    ...props.i18n,
+}));
 
 /**
  * 用 Set 加速命中判断，避免每项 O(n) 扫描
@@ -78,7 +92,8 @@ const formatUpdateTime = (time: number): string => {
         (todayStart - targetDayStart) / (24 * 60 * 60 * 1000)
     );
     if (diffDays >= 1 && diffDays <= 6) {
-        return `${diffDays}天前`;
+        // daysAgo 支持 {days} 占位符（"{days}天前" / "{days}d ago"）
+        return mergedI18n.value.daysAgo.replace('{days}', String(diffDays));
     }
     return `${target.getMonth() + 1}/${target.getDate()}`;
 };
@@ -107,7 +122,7 @@ const handleDeleteClick = (event: Event, detail: ChatConversation) => {
     <!-- 会话列表容器 -->
     <div class="history-list">
         <div class="history-header">
-            <span class="history-header__title">任务列表</span>
+            <span class="history-header__title">{{ mergedI18n.taskListTitle }}</span>
         </div>
         <!-- 会话项列表 -->
         <div
@@ -124,13 +139,13 @@ const handleDeleteClick = (event: Event, detail: ChatConversation) => {
               2. hover / active 且非进行中 → 删除按钮
               3. 否则 → 最近更新时间（hover / active 时才可见）
             -->
-            <span v-if="chattingIdSet.has(item.Id)" class="history-loading" aria-label="进行中">
+            <span v-if="chattingIdSet.has(item.Id)" class="history-loading" :aria-label="mergedI18n.inProgress">
                 <TLoading size="14px" />
             </span>
             <template v-else>
                 <span
                     class="history-delete"
-                    aria-label="删除会话"
+                    :aria-label="mergedI18n.deleteConversation"
                     role="button"
                     tabindex="0"
                     @click="handleDeleteClick($event, item)"

@@ -15,11 +15,17 @@ import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import CustomizedIcon from '../CustomizedIcon.vue';
 import ChannelSettingsDialog from '../Channel/ChannelSettingsDialog.vue';
 import type { ThemeProps } from '../../model/type';
-import { themePropsDefaults } from '../../model/type';
+import { themePropsDefaults, defaultSideI18n, defaultSideI18nEn } from '../../model/type';
 import type { ChannelApiConfig } from '../../service/channelApi';
 import { describeChannelList, type ChannelItem } from '../../service/channelApi';
 import type { ChannelSettingsI18n } from '../../model/channel';
-import { CHANNEL_ICON_MAP, CHANNEL_NAME_KEYS, ClawChannelStatus } from '../../model/channel';
+import {
+    CHANNEL_ICON_MAP,
+    CHANNEL_NAME_KEYS,
+    ClawChannelStatus,
+    defaultChannelSettingsI18n,
+    defaultChannelSettingsI18nEn,
+} from '../../model/channel';
 
 /** 远程终端项数据结构 */
 export interface RemoteTerminalItem {
@@ -91,28 +97,55 @@ export interface Props extends ThemeProps {
     channelApiConfig?: ChannelApiConfig;
     /** 渠道设置弹窗 i18n 覆盖 */
     channelSettingsI18n?: Partial<ChannelSettingsI18n>;
+    /** 当前语言标识（如 'zh-CN'、'en-US'），仅用于内部默认文案 fallback */
+    language?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
     ...themePropsDefaults,
-    title: '远程终端',
+    title: '',
     items: () => [],
     activeId: '',
-    emptyText: '暂无远程终端',
+    emptyText: '',
     useInternalFetch: false,
     channelListApi: '',
     spaceId: '',
     responseAdapter: undefined,
     defaultCollapsed: false,
     showSetting: true,
-    settingTip: '渠道设置',
+    settingTip: '',
     settingIcon: 'basic_setting_line',
     channelSettingAppId: '',
     channelSettingUserId: '',
     channelSettingAgentId: '',
     channelApiConfig: () => ({}),
     channelSettingsI18n: () => ({}),
+    language: 'zh-CN',
 });
+
+/** 内部 i18n fallback：外部未传时按 language 选中/英文 */
+const fallbackI18n = computed(() => (props.language?.startsWith('en') ? defaultSideI18nEn : defaultSideI18n));
+
+/**
+ * 按渠道类型 + language 获取客户端展示名称。
+ * 后端 channelName 在创建时可能携带特定语言文案，这里按客户端语言重新翻译，
+ * 确保英文模式下不会显示中文渠道名（如"企微智能机器人"/"微信"）。
+ */
+const getChannelDisplayLabel = (channelType: number): string => {
+    const key = CHANNEL_NAME_KEYS[channelType] || '';
+    if (!key) return '';
+    const i18n = props.language?.startsWith('en')
+        ? defaultChannelSettingsI18nEn
+        : defaultChannelSettingsI18n;
+    return (i18n as Record<string, string>)[key] || '';
+};
+
+/** 最终展示的分组标题 */
+const displayTitle = computed(() => props.title || fallbackI18n.value.remoteTerminal);
+/** 最终展示的空态文案 */
+const displayEmptyText = computed(() => props.emptyText || fallbackI18n.value.remoteTerminalEmpty);
+/** 最终展示的设置按钮 tooltip 文案 */
+const displaySettingTip = computed(() => props.settingTip || fallbackI18n.value.remoteTerminalSetting);
 
 const emit = defineEmits<{
     /** 选中一个远程终端 */
@@ -170,7 +203,7 @@ const fetchList = async () => {
                 const iconUrl = CHANNEL_ICON_MAP[ch.channelType] || '';
                 return {
                     id: String(ch.channelId),
-                    label: ch.channelName,
+                    label: getChannelDisplayLabel(ch.channelType),
                     icon: iconUrl,
                     iconRemote: false,  // 使用本地图片，非 iconfont
                     raw: { ...ch, channelType: ch.channelType },
@@ -283,11 +316,11 @@ defineExpose({
                 :show-hover-bg="false"
                 class="rt-header__caret"
             /> -->
-            <span class="rt-header__title">{{ title }}</span>
+            <span class="rt-header__title">{{ displayTitle }}</span>
             <span
                 v-if="showSetting"
                 class="rt-header__setting"
-                :title="settingTip"
+                :title="displaySettingTip"
                 role="button"
                 tabindex="0"
                 @click="handleSetting"
@@ -334,7 +367,7 @@ defineExpose({
                 <div class="rt-item__label" :title="item.label">{{ item.label }}</div>
             </div>
             <div v-if="displayItems.length === 0" class="rt-empty">
-                {{ emptyText }}
+                {{ displayEmptyText }}
             </div>
         </div>
     </div>
@@ -347,6 +380,7 @@ defineExpose({
         :agent-id="channelSettingAgentId"
         :api-config="channelApiConfig"
         :i18n="channelSettingsI18n"
+        :language="language"
         :theme="theme"
         @refreshed="refreshAfterBind"
     />

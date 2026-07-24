@@ -1,6 +1,7 @@
 /**
  * 消息常量定义
  * 统一管理所有提示消息的 code 和 message 映射
+ * 内部维护中/英双套默认文案，通过 language 参数或 getMessage 的 language 入参切换
  */
 
 /** 消息码常量对象 */
@@ -26,7 +27,7 @@ export const MessageCode = {
     AUDIO_CONTEXT_NOT_SUPPORT: 'AUDIO_CONTEXT_NOT_SUPPORT',
     WEB_AUDIO_API_NOT_SUPPORT: 'WEB_AUDIO_API_NOT_SUPPORT',
     MEDIA_STREAM_SOURCE_NOT_SUPPORT: 'MEDIA_STREAM_SOURCE_NOT_SUPPORT',
-    
+
     // 警告类
     ANSWERING: 'ANSWERING',
     RECORD_TOO_LONG: 'RECORD_TOO_LONG',
@@ -40,138 +41,165 @@ export type MessageType = 'success' | 'warning' | 'error' | 'info';
 
 /** 消息配置项 */
 export interface MessageConfig {
+    /** 消息码 */
     code: MessageCode;
+    /** 消息文本（按当前 language 派生） */
     message: string;
+    /** 消息类型（success/warning/error/info） */
     type: MessageType;
 }
 
-/** 消息映射表 */
-export const MESSAGE_MAP: Record<MessageCode, MessageConfig> = {
+/** 单条消息的 type 与 中/英 文案定义 */
+interface MessageEntry {
+    type: MessageType;
+    zh: string;
+    en: string;
+}
+
+/** 消息映射表（内部维护中/英双套文案） */
+const MESSAGE_MAP: Record<MessageCode, MessageEntry> = {
     // 成功类
     [MessageCode.COPY_SUCCESS]: {
-        code: MessageCode.COPY_SUCCESS,
-        message: '复制成功',
         type: 'success',
+        zh: '复制成功',
+        en: 'Copied',
     },
     // 错误类
     [MessageCode.COPY_FAILED]: {
-        code: MessageCode.COPY_FAILED,
-        message: '复制失败',
         type: 'error',
+        zh: '复制失败',
+        en: 'Copy failed',
     },
     [MessageCode.SHARE_FAILED]: {
-        code: MessageCode.SHARE_FAILED,
-        message: '分享失败',
         type: 'error',
+        zh: '分享失败',
+        en: 'Share failed',
     },
     [MessageCode.FILE_UPLOAD_FAILED]: {
-        code: MessageCode.FILE_UPLOAD_FAILED,
-        message: '文件上传失败',
         type: 'error',
+        zh: '文件上传失败',
+        en: 'File upload failed',
     },
     [MessageCode.FILE_FORMAT_NOT_SUPPORT]: {
-        code: MessageCode.FILE_FORMAT_NOT_SUPPORT,
-        message: '不支持的文件格式',
         type: 'error',
+        zh: '不支持的文件格式',
+        en: 'Unsupported file format',
     },
     [MessageCode.GET_APP_LIST_FAILED]: {
-        code: MessageCode.GET_APP_LIST_FAILED,
-        message: '获取应用列表失败',
         type: 'error',
+        zh: '获取应用列表失败',
+        en: 'Failed to load application list',
     },
     [MessageCode.GET_CONVERSATION_LIST_FAILED]: {
-        code: MessageCode.GET_CONVERSATION_LIST_FAILED,
-        message: '获取会话列表失败',
         type: 'error',
+        zh: '获取会话列表失败',
+        en: 'Failed to load conversation list',
     },
     [MessageCode.GET_CONVERSATION_DETAIL_FAILED]: {
-        code: MessageCode.GET_CONVERSATION_DETAIL_FAILED,
-        message: '获取会话详情失败',
         type: 'error',
+        zh: '获取会话详情失败',
+        en: 'Failed to load conversation detail',
     },
     [MessageCode.SEND_MESSAGE_FAILED]: {
-        code: MessageCode.SEND_MESSAGE_FAILED,
-        message: '发送消息失败',
         type: 'error',
+        zh: '发送消息失败',
+        en: 'Failed to send message',
     },
     [MessageCode.NETWORK_ERROR]: {
-        code: MessageCode.NETWORK_ERROR,
-        message: '网络错误',
         type: 'error',
+        zh: '网络错误',
+        en: 'Network error',
     },
     [MessageCode.LOAD_MORE_FAILED]: {
-        code: MessageCode.LOAD_MORE_FAILED,
-        message: '加载更多失败',
         type: 'error',
+        zh: '加载更多失败',
+        en: 'Failed to load more',
     },
     [MessageCode.RATE_FAILED]: {
-        code: MessageCode.RATE_FAILED,
-        message: '评分失败',
         type: 'error',
+        zh: '评分失败',
+        en: 'Rating failed',
     },
     [MessageCode.ASR_SERVICE_FAILED]: {
-        code: MessageCode.ASR_SERVICE_FAILED,
-        message: '获取语音识别服务失败',
         type: 'error',
+        zh: '获取语音识别服务失败',
+        en: 'Failed to acquire ASR service',
     },
     [MessageCode.RECORD_FAILED]: {
-        code: MessageCode.RECORD_FAILED,
-        message: '录音失败',
         type: 'error',
+        zh: '录音失败',
+        en: 'Recording failed',
     },
     [MessageCode.CHROME_SECURITY_ERROR]: {
-        code: MessageCode.CHROME_SECURITY_ERROR,
-        message: 'Chrome下获取录音功能需要在localhost、127.0.0.1或https下才能获取权限',
         type: 'error',
+        zh: 'Chrome下获取录音功能需要在localhost、127.0.0.1或https下才能获取权限',
+        en: 'Chrome requires localhost, 127.0.0.1 or HTTPS to grant microphone permission',
     },
     [MessageCode.BROWSER_NOT_SUPPORT]: {
-        code: MessageCode.BROWSER_NOT_SUPPORT,
-        message: '无法获取浏览器录音功能，请升级浏览器或使用Chrome',
         type: 'error',
+        zh: '无法获取浏览器录音功能，请升级浏览器或使用Chrome',
+        en: 'Browser recording is not available. Please upgrade your browser or use Chrome',
     },
     [MessageCode.AUDIO_CONTEXT_NOT_SUPPORT]: {
-        code: MessageCode.AUDIO_CONTEXT_NOT_SUPPORT,
-        message: '浏览器不支持AudioContext',
         type: 'error',
+        zh: '浏览器不支持AudioContext',
+        en: 'Browser does not support AudioContext',
     },
     [MessageCode.WEB_AUDIO_API_NOT_SUPPORT]: {
-        code: MessageCode.WEB_AUDIO_API_NOT_SUPPORT,
-        message: '浏览器不支持webAudioApi相关接口',
         type: 'error',
+        zh: '浏览器不支持webAudioApi相关接口',
+        en: 'Browser does not support Web Audio API',
     },
     [MessageCode.MEDIA_STREAM_SOURCE_NOT_SUPPORT]: {
-        code: MessageCode.MEDIA_STREAM_SOURCE_NOT_SUPPORT,
-        message: '不支持MediaStreamSource',
         type: 'error',
+        zh: '不支持MediaStreamSource',
+        en: 'MediaStreamSource is not supported',
     },
-    
+
     // 警告类
     [MessageCode.ANSWERING]: {
-        code: MessageCode.ANSWERING,
-        message: '正在回答中...',
         type: 'warning',
+        zh: '正在回答中...',
+        en: 'Answering...',
     },
     [MessageCode.RECORD_TOO_LONG]: {
-        code: MessageCode.RECORD_TOO_LONG,
-        message: '录音时间过长',
         type: 'warning',
+        zh: '录音时间过长',
+        en: 'Recording is too long',
     },
 };
 
 /**
+ * 判断 language 是否为英文（前缀 en）
+ * @param language 语言标识（如 'zh-CN'、'en-US'）
+ */
+function isEnglish(language?: string): boolean {
+    return !!language && language.startsWith('en');
+}
+
+/**
  * 根据消息码获取消息配置
  * @param code 消息码
+ * @param language 当前语言标识（如 'zh-CN'、'en-US'），未传时按中文
  * @returns 消息配置
  */
-export function getMessage(code: MessageCode): MessageConfig {
-    return MESSAGE_MAP[code];
+export function getMessage(code: MessageCode, language?: string): MessageConfig {
+    const entry = MESSAGE_MAP[code];
+    return {
+        code,
+        type: entry.type,
+        message: isEnglish(language) ? entry.en : entry.zh,
+    };
 }
 
 /**
  * 根据消息码获取消息文本
  * @param code 消息码
+ * @param language 当前语言标识（如 'zh-CN'、'en-US'），未传时按中文
  * @returns 消息文本
  */
-export function getMessageText(code: MessageCode): string {
-    return MESSAGE_MAP[code]?.message || '';
+export function getMessageText(code: MessageCode, language?: string): string {
+    const entry = MESSAGE_MAP[code];
+    if (!entry) return '';
+    return isEnglish(language) ? entry.en : entry.zh;
 }

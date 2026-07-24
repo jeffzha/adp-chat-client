@@ -331,10 +331,10 @@ const handleClearConfirm = async (row: ChannelRow) => {
             { applicationId: props.applicationId, channelId: row.channelId },
             apiConfig.value.deleteChannelApi,
         );
-        MessagePlugin.success('清除成功');
+        MessagePlugin.success(mergedI18n.value.clearSuccess);
         await refreshList();
     } catch (err) {
-        MessagePlugin.error('清除失败');
+        MessagePlugin.error(mergedI18n.value.clearFailed);
     } finally {
         clearLoadingMap.value[row.channelType] = false;
     }

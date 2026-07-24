@@ -15,6 +15,7 @@ import ChannelConversationPanel from '../Channel/ChannelConversationPanel.vue';
 import type { Application, AppPattern } from '../../model/application';
 import type { ChatConversation, Record, Reference, SseEvent, Content, ErrorEvent } from '../../model/chat-v2';
 import type { CronTaskI18n, TimerTask, TimerTaskSummary } from '../../model/cronTask';
+import { getCronTaskI18nByLanguage } from '../../model/cronTask';
 import { AppTriggerScope, AppTriggerStatus } from '../../model/appTrigger';
 import type { AppTriggerSummary } from '../../model/appTrigger';
 import type { FileProps } from '../../model/file';
@@ -464,6 +465,16 @@ const mergedSideI18n = computed(() => {
     const defaults = props.language?.startsWith('en') ? defaultSideI18nEn : defaultSideI18n;
     return { ...defaults, ...props.sideI18n };
 });
+
+/**
+ * 合并定时任务 i18n（侧边栏「定时任务」分组、执行记录 sidebar 等复用）。
+ * 供本文件内部构造 cronTaskItems、格式化时间等使用，
+ * 组件自身仍会各自内部合并（组件同时接收 language + i18n）。
+ */
+const mergedCronTaskI18n = computed(() => ({
+    ...getCronTaskI18nByLanguage(props.language),
+    ...props.cronTaskI18n,
+}));
 
 // 计算是否为移动端模式（内部计算，不再依赖外部传入）
 const isMobile = computed(() => {
@@ -1804,8 +1815,11 @@ const cronTaskUserId = computed(() => buildChannelUserId(currentUserId.value || 
 const cronTaskItems = computed<SideGroupItem[]>(() =>
     cronTaskListRaw.value.map((item) => ({
         id: getTriggerId(item),
-        label: getTriggerName(item) || '未命名任务',
-        extraText: formatRelativeTime(getTriggerLastFireTime(item)),
+        label: getTriggerName(item) || mergedCronTaskI18n.value.unnamedTask,
+        extraText: formatRelativeTime(getTriggerLastFireTime(item), {
+            today: mergedCronTaskI18n.value.today,
+            daysAgo: mergedCronTaskI18n.value.daysAgo,
+        }),
     })),
 );
 
@@ -3047,6 +3061,7 @@ defineExpose({
                 :channelSettingUserId="currentUserId"
                 :channelSettingAgentId="currentAgentId"
                 :chatMode="chatMode"
+                :language="language"
                 @toggleSidebar="handleToggleSidebar"
                 @selectApplication="handleSelectApplication"
                 @selectConversation="handleSelectConversation"
@@ -3207,6 +3222,7 @@ defineExpose({
                 :active-conversation-id="currentConversationId"
                 :is-mobile="isMobile"
                 :theme="theme"
+                :language="props.language"
                 @select="handleChannelConversationSelect"
                 @close="channelDrawerVisible = false"
             />

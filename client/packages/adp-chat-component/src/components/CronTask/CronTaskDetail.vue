@@ -392,7 +392,10 @@ const executionLogs = computed(() =>
             ...log,
             LogId: getLogInstanceId(log),
             ConversationId: getLogConversationId(log),
-            _timeLabel: formatRelativeTime(getLogTriggerTime(log)),
+            _timeLabel: formatRelativeTime(getLogTriggerTime(log), {
+                today: i18n.value.today,
+                daysAgo: i18n.value.daysAgo,
+            }),
             _statusClass: getLogStatusClass(status),
             _statusText: getLogStatusText(status),
             _content: getLogContent(log),
@@ -418,14 +421,14 @@ function getLogStatusClass(status: number): string {
 }
 
 function getLogStatusText(status: number): string {
-    const en = props.language?.startsWith('en');
+    const t = i18n.value;
     const map: Record<number, string> = {
-        [TimerRunStatus.PENDING]: en ? 'Pending' : '等待执行',
-        [TimerRunStatus.RUNNING]: en ? 'Running' : '执行中',
-        [TimerRunStatus.RETRY_WAIT]: en ? 'Retry Waiting' : '等待重试',
-        [TimerRunStatus.SUCCESS]: en ? 'Success' : '执行成功',
-        [TimerRunStatus.DEAD]: en ? 'Failed' : '执行失败',
-        [TimerRunStatus.CANCELLED]: en ? 'Cancelled' : '已取消',
+        [TimerRunStatus.PENDING]: t.runStatusPending,
+        [TimerRunStatus.RUNNING]: t.runStatusRunning,
+        [TimerRunStatus.RETRY_WAIT]: t.runStatusRetryWait,
+        [TimerRunStatus.SUCCESS]: t.runStatusSuccess,
+        [TimerRunStatus.DEAD]: t.runStatusFailed,
+        [TimerRunStatus.CANCELLED]: t.runStatusCancelled,
     };
     return map[status] || '';
 }

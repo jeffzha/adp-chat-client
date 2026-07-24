@@ -164,7 +164,7 @@ def sign(key, msg):
     return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
 
 
-def tc_request_prepare(config: dict, action: str, payload: str, service: str = "lke", version: str = None, action_overrides: dict = None) -> dict:
+def tc_request_prepare(config: dict, action: str, payload: str, service: str = "lke", version: str = None, action_overrides: dict = None, language: str = None) -> dict:
     """构造腾讯云 API 签名请求的 headers 和 url
 
     Args:
@@ -174,6 +174,7 @@ def tc_request_prepare(config: dict, action: str, payload: str, service: str = "
         service: 目标服务名称（由 action_version 配置决定）
         version: API 版本号覆盖（通常不再使用，由 action_version 配置决定）
         action_overrides: 特定场景的 action_version 配置
+        language: X-TC-Language header 值（如 'zh-CN'、'en-US'），用于通知腾讯云 API 返回对应语言的数据
     """
     # 优先使用 config 中注入的密钥（如 ChinaTencentADP），否则使用全局 TC 密钥
     secret_id = config.get('secret_id') or tagentic_config.TC_SECRET_ID
@@ -249,7 +250,10 @@ def tc_request_prepare(config: dict, action: str, payload: str, service: str = "
     # action_version 配置优先级最高，覆盖所有（包括 X-TC-Version）
     for h_key, h_value in action_headers_config.items():
         headers[h_key] = h_value
-   
+    # 注入 X-TC-Language header（前端 Language header 透传）
+    if language:
+        headers["X-TC-Language"] = language
+
     return headers, url
 
 
@@ -265,6 +269,7 @@ async def tc_request(
     service=None, version: str = None,
     variables: dict = None,
     action_overrides: dict = None,
+    language: str = None,
 ) -> str:
     """发起腾讯云 API 请求
 
@@ -276,6 +281,7 @@ async def tc_request(
         version: API 版本号（已废弃，建议不传，由 action_version 配置决定）
         variables: 模板变量字典
         action_overrides: 特定场景的 action_version 配置（由 TCADP 实例传入）
+        language: X-TC-Language header 值（如 'zh-CN'、'en-US'），用于通知腾讯云 API 返回对应语言的数据
     """
     if service is None:
         service = _resolve_service(action, action_overrides)
@@ -283,7 +289,7 @@ async def tc_request(
         payload = {}
     payload = inject_action_payload(action, payload, variables, action_overrides)
     payload = json.dumps(payload)
-    headers, url = tc_request_prepare(config, action, payload, service, version, action_overrides)
+    headers, url = tc_request_prepare(config, action, payload, service, version, action_overrides, language)
     full_url = f'{url}/'
     logging.info(
         '[tc_request] POST %s action=%s service=%s version=%s host=%s '
@@ -313,7 +319,7 @@ async def tc_request(
                 }
 
 
-async def tc_request_sse(config: dict, action: str, payload: dict = None, service=None, version: str = None, action_overrides: dict = None):
+async def tc_request_sse(config: dict, action: str, payload: dict = None, service=None, version: str = None, action_overrides: dict = None, language: str = None):
     """发起腾讯云 API SSE 流式请求
 
     Args:
@@ -323,13 +329,14 @@ async def tc_request_sse(config: dict, action: str, payload: dict = None, servic
         service: 目标服务名（已废弃，建议不传，由 action_version 配置决定）
         version: API 版本号（已废弃，建议不传，由 action_version 配置决定）
         action_overrides: 特定场景的 action_version 配置（由 TCADP 实例传入）
+        language: X-TC-Language header 值（如 'zh-CN'、'en-US'），用于通知腾讯云 API 返回对应语言的数据
     """
     if service is None:
         service = _resolve_service(action, action_overrides)
     if payload is None:
         payload = {}
     payload = json.dumps(payload)
-    headers, url = tc_request_prepare(config, action, payload, service, version, action_overrides)
+    headers, url = tc_request_prepare(config, action, payload, service, version, action_overrides, language)
     async with aiohttp.ClientSession() as session:
         async with session.post(f'{url}/', headers=headers, data=payload) as resp:
             try:

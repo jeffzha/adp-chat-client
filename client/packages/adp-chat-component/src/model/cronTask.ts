@@ -280,8 +280,6 @@ export interface CronTaskI18n {
     loadMore?: string;
     loading?: string;
     loadFailed?: string;
-    /** 执行记录列表加载完时的"没有更多"文案 */
-    noMore?: string;
 
     /* 卡片 */
     running?: string;
@@ -379,6 +377,28 @@ export interface CronTaskI18n {
     /* 相对时间 */
     today?: string;
     daysAgo?: string;
+
+    /* 单次执行状态（TimerRunStatus 映射） */
+    /** PENDING（等待执行） */
+    runStatusPending?: string;
+    /** RUNNING（执行中） */
+    runStatusRunning?: string;
+    /** RETRY_WAIT（等待重试） */
+    runStatusRetryWait?: string;
+    /** SUCCESS（执行成功） */
+    runStatusSuccess?: string;
+    /** DEAD / FAILED（执行失败） */
+    runStatusFailed?: string;
+    /** CANCELLED（已取消） */
+    runStatusCancelled?: string;
+
+    /* 通用操作 */
+    /** 刷新按钮 tooltip */
+    refresh?: string;
+    /** 关闭按钮 tooltip */
+    close?: string;
+    /** 未命名任务兜底 */
+    unnamedTask?: string;
 }
 
 /** CronTask i18n 中文默认值 */
@@ -393,7 +413,6 @@ export const defaultCronTaskI18n: Required<CronTaskI18n> = {
     loadMore: '加载更多',
     loading: '加载中',
     loadFailed: '加载失败',
-    noMore: '没有更多了',
 
     running: '运行中',
     paused: '已暂停',
@@ -477,6 +496,17 @@ export const defaultCronTaskI18n: Required<CronTaskI18n> = {
     weekdayNames: ['日', '一', '二', '三', '四', '五', '六'],
     today: '今天',
     daysAgo: '天前',
+
+    runStatusPending: '等待执行',
+    runStatusRunning: '执行中',
+    runStatusRetryWait: '等待重试',
+    runStatusSuccess: '执行成功',
+    runStatusFailed: '执行失败',
+    runStatusCancelled: '已取消',
+
+    refresh: '刷新',
+    close: '关闭',
+    unnamedTask: '未命名任务',
 };
 
 /** CronTask i18n 英文默认值 */
@@ -511,7 +541,6 @@ export const defaultCronTaskI18nEn: Required<CronTaskI18n> = {
     schedule: 'Schedule',
     runLog: 'Run Logs',
     noRunLog: 'No run logs yet',
-    noMore: 'No more logs',
     viewSession: 'View session',
     unread: 'Unread',
     executionRecordTitle: 'Execution Records',
@@ -575,6 +604,17 @@ export const defaultCronTaskI18nEn: Required<CronTaskI18n> = {
     weekdayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     today: 'Today',
     daysAgo: 'd ago',
+
+    runStatusPending: 'Pending',
+    runStatusRunning: 'Running',
+    runStatusRetryWait: 'Retry Waiting',
+    runStatusSuccess: 'Success',
+    runStatusFailed: 'Failed',
+    runStatusCancelled: 'Cancelled',
+
+    refresh: 'Refresh',
+    close: 'Close',
+    unnamedTask: 'Untitled task',
 };
 
 /** 按语言选取默认 i18n */

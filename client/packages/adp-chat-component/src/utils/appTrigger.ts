@@ -226,17 +226,59 @@ export function getLogUnread(log: any): boolean {
 
 import { AppTriggerStatus, AppTriggerFireType } from '../model/appTrigger';
 
-/** AppTriggerStatus 枚举 → 中文状态文本 */
+/**
+ * AppTriggerStatus 枚举 → 中文状态文本
+ * @deprecated 建议使用 `getAppTriggerStatusText(status, language)` 支持国际化。
+ *   本常量保留以兼容旧调用方（例如仅在中文场景下拼接展示的地方）。
+ */
 export const APP_TRIGGER_STATUS_TEXT: Record<number, string> = {
     [AppTriggerStatus.ENABLED]: '运行中',
     [AppTriggerStatus.PAUSED]: '已暂停',
     [AppTriggerStatus.DELETED]: '已删除',
 };
 
-/** AppTriggerFireType 枚举 → 中文触发来源文本 */
+/**
+ * AppTriggerFireType 枚举 → 中文触发来源文本
+ * @deprecated 建议使用 `getAppTriggerFireTypeText(type, language)` 支持国际化。
+ */
 export const APP_TRIGGER_FIRE_TYPE_TEXT: Record<number, string> = {
     [AppTriggerFireType.SCHEDULED]: '定时触发',
     [AppTriggerFireType.WEBHOOK]: 'Webhook',
     [AppTriggerFireType.MANUAL_RUN]: '手动执行',
     [AppTriggerFireType.TEST_RUN]: '测试执行',
 };
+
+/** AppTriggerStatus 枚举 → 英文状态文本 */
+const APP_TRIGGER_STATUS_TEXT_EN: Record<number, string> = {
+    [AppTriggerStatus.ENABLED]: 'Running',
+    [AppTriggerStatus.PAUSED]: 'Paused',
+    [AppTriggerStatus.DELETED]: 'Deleted',
+};
+
+/** AppTriggerFireType 枚举 → 英文触发来源文本 */
+const APP_TRIGGER_FIRE_TYPE_TEXT_EN: Record<number, string> = {
+    [AppTriggerFireType.SCHEDULED]: 'Scheduled',
+    [AppTriggerFireType.WEBHOOK]: 'Webhook',
+    [AppTriggerFireType.MANUAL_RUN]: 'Manual',
+    [AppTriggerFireType.TEST_RUN]: 'Test',
+};
+
+function isEnglishLang(language?: string): boolean {
+    return !!language && language.startsWith('en');
+}
+
+/**
+ * 获取 AppTrigger 状态文本，按 language 返回中文/英文。
+ */
+export function getAppTriggerStatusText(status: number, language?: string): string {
+    const map = isEnglishLang(language) ? APP_TRIGGER_STATUS_TEXT_EN : APP_TRIGGER_STATUS_TEXT;
+    return map[status] || '';
+}
+
+/**
+ * 获取 AppTrigger 触发来源文本，按 language 返回中文/英文。
+ */
+export function getAppTriggerFireTypeText(type: number, language?: string): string {
+    const map = isEnglishLang(language) ? APP_TRIGGER_FIRE_TYPE_TEXT_EN : APP_TRIGGER_FIRE_TYPE_TEXT;
+    return map[type] || '';
+}

@@ -419,7 +419,7 @@ async function refreshKnowledgeNames(appId: string) {
         const { list } = await listReferShareKnowledge({
             applicationId: appId,
             includeDefault: true,
-            defaultName: '默认知识库',
+            defaultName: skillsI18n.value.defaultKnowledgeName,
         });
         const map: Record<string, string> = {};
         for (const item of list) {
@@ -540,10 +540,10 @@ async function removeSkillById(skillId: string) {
                 skillId: s.SkillId || '',
             }));
         await modifySkillList(appId, remainingSkills);
-        MessagePlugin.success('已移除');
+        MessagePlugin.success(skillsI18n.value.removeSuccessToast);
     } catch (e) {
         console.error('[Sender] removeSkill error:', e);
-        MessagePlugin.error('移除失败');
+        MessagePlugin.error(skillsI18n.value.removeFailedToast);
     }
 }
 
@@ -937,7 +937,7 @@ const handleFilesSelected = (event: Event, allowedTypes: string[]) => {
     const validFiles: File[] = [];
     Array.from(files).forEach((file) => {
         if (!allowedTypes.includes(file.type) && !isExtensionAllowed(file.name, allowedTypes)) {
-            const text = i18n.value.notSupport || getMessage(MessageCode.FILE_FORMAT_NOT_SUPPORT).message;
+            const text = i18n.value.notSupport || getMessage(MessageCode.FILE_FORMAT_NOT_SUPPORT, props.language).message;
             MessagePlugin.error(text);
             emit('message', MessageCode.FILE_FORMAT_NOT_SUPPORT, text);
             return;
@@ -1015,7 +1015,7 @@ const handleSend = async function () {
         return;
     }
     if (props.isStreamLoad) {
-        const text = i18n.value.answering || getMessage(MessageCode.ANSWERING).message;
+        const text = i18n.value.answering || getMessage(MessageCode.ANSWERING, props.language).message;
         MessagePlugin.warning(text);
         emit('message', MessageCode.ANSWERING, text);
         return;
@@ -1067,7 +1067,7 @@ const handleStartRecord = async () => {
                 startRecording();
                 recordRef.value = setTimeout(() => {
                     if (recording.value) {
-                        const text = i18n.value.recordTooLong || getMessage(MessageCode.RECORD_TOO_LONG).message;
+                        const text = i18n.value.recordTooLong || getMessage(MessageCode.RECORD_TOO_LONG, props.language).message;
                         MessagePlugin.warning(text);
                         emit('message', MessageCode.RECORD_TOO_LONG, text);
                         handleStopRecord();
@@ -1100,7 +1100,7 @@ const handleStartRecord = async () => {
             };
         } catch (error) {
             recording.value = false;
-            const text = i18n.value.asrServiceFailed || getMessage(MessageCode.ASR_SERVICE_FAILED).message;
+            const text = i18n.value.asrServiceFailed || getMessage(MessageCode.ASR_SERVICE_FAILED, props.language).message;
             MessagePlugin.error(text);
             emit('message', MessageCode.ASR_SERVICE_FAILED, text);
         }
@@ -1133,13 +1133,13 @@ const startRecording = () => {
             };
             const mapping = errorCodeMap[err.code as string];
             if (mapping) {
-                errMsg = i18n.value[mapping.i18nKey] || getMessage(mapping.messageCode).message;
+                errMsg = i18n.value[mapping.i18nKey] || getMessage(mapping.messageCode, props.language).message;
                 errCode = mapping.messageCode;
             } else {
-                errMsg = i18n.value.recordFailed || getMessage(MessageCode.RECORD_FAILED).message;
+                errMsg = i18n.value.recordFailed || getMessage(MessageCode.RECORD_FAILED, props.language).message;
             }
         } else {
-            errMsg = typeof err === 'string' ? err : (i18n.value.recordFailed || getMessage(MessageCode.RECORD_FAILED).message);
+            errMsg = typeof err === 'string' ? err : (i18n.value.recordFailed || getMessage(MessageCode.RECORD_FAILED, props.language).message);
         }
         MessagePlugin.error(errMsg);
         emit('message', errCode, errMsg);
@@ -1288,6 +1288,7 @@ defineExpose({
                     :options="modelOptions"
                     :application-id="currentApplicationId"
                     :theme="theme"
+                    :language="language"
                     is-button-mode
                     @update:selected="(model: ModelOption) => { emit('update:selectedModel', model); emit('modelChange', model); }"
                 />
@@ -1337,6 +1338,7 @@ defineExpose({
                     :options="modelOptions"
                     :application-id="currentApplicationId"
                     :theme="theme"
+                    :language="language"
                     is-button-mode
                     @update:selected="(model: ModelOption) => { emit('update:selectedModel', model); emit('modelChange', model); }"
                 />

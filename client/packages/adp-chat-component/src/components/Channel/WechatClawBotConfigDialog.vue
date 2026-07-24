@@ -118,7 +118,9 @@ const isModify = computed(() => {
 });
 
 const dialogTitle = computed(() => {
-    return isModify.value ? '重新配置微信' : '微信渠道配置';
+    return isModify.value
+        ? mergedI18n.value.wechatClawBotDialogTitleModify
+        : mergedI18n.value.wechatClawBotDialogTitleCreate;
 });
 
 // ============================================================
@@ -126,16 +128,17 @@ const dialogTitle = computed(() => {
 // ============================================================
 
 const qrcodeTipText = computed(() => {
+    const i = mergedI18n.value;
     if (qrcodeStatus.value === QRCODE_STATUS.CONFIRMED) {
-        return '已成功绑定微信ClawBot';
+        return i.wechatClawBotQrcodeTipConfirmed;
     }
     if (qrcodeStatus.value === QRCODE_STATUS.EXPIRED) {
-        return '二维码已过期，点击刷新';
+        return i.wechatClawBotQrcodeTipExpired;
     }
     if (qrcodeStatus.value === QRCODE_STATUS.SCANED) {
-        return '扫码成功，请在微信中确认';
+        return i.wechatClawBotQrcodeTipScan;
     }
-    return '微信扫码授权';
+    return i.wechatClawBotQrcodeTipWait;
 });
 
 // ============================================================
@@ -206,7 +209,7 @@ const initFlow = async () => {
         const result = await createChannel({
             applicationId: props.applicationId,
             channelType: ChannelType.WECHAT_CLAWBOT,
-            channelName: '微信',
+            channelName: mergedI18n.value.wechatClawBotChannelName,
             description: '',
             channelConfig: { WechatClawBot: {} },
             userAgent: {
@@ -225,10 +228,10 @@ const initFlow = async () => {
             // 开始轮询二维码状态
             startStatusPolling();
         } else {
-            errorMsg.value = '未获取到二维码，请刷新重试';
+            errorMsg.value = mergedI18n.value.wechatClawBotQrcodeFailed;
         }
     } catch (err: any) {
-        errorMsg.value = err?.message || '创建渠道失败';
+        errorMsg.value = err?.message || mergedI18n.value.wechatClawBotCreateFailed;
     } finally {
         isLoading.value = false;
     }
@@ -314,7 +317,7 @@ const handleClose = () => {
                 <!-- 加载中 -->
                 <div v-if="isLoading" class="wcc-status">
                     <t-loading size="medium" />
-                    <p>正在生成二维码...</p>
+                    <p>{{ mergedI18n.wechatClawBotGenerating }}</p>
                 </div>
 
                 <!-- 已确认成功 -->
@@ -353,14 +356,14 @@ const handleClose = () => {
 
                 <div class="wcc-footer">
                     <template v-if="errorMsg">
-                        <t-button theme="default" @click="visible = false">关闭</t-button>
-                        <t-button theme="primary" @click="handleRefresh">重试</t-button>
+                        <t-button theme="default" @click="visible = false">{{ mergedI18n.wechatClawBotClose }}</t-button>
+                        <t-button theme="primary" @click="handleRefresh">{{ mergedI18n.wechatClawBotRetry }}</t-button>
                     </template>
                     <template v-else-if="qrcodeStatus === QRCODE_STATUS.CONFIRMED">
-                        <t-button theme="primary" @click="handleDone">完成</t-button>
+                        <t-button theme="primary" @click="handleDone">{{ mergedI18n.wechatClawBotDone }}</t-button>
                     </template>
                     <template v-else>
-                        <t-button theme="default" @click="visible = false">取消</t-button>
+                        <t-button theme="default" @click="visible = false">{{ mergedI18n.wechatClawBotCancel }}</t-button>
                     </template>
                 </div>
             </div>
