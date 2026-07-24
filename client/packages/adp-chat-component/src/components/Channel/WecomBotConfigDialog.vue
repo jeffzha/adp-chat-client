@@ -5,6 +5,12 @@
     新建：调用 CreateChannel（scene=1, channel_type=10014, WecomRobot.Websocket）
     重新配置：调用 ModifyChannel（channel_id 已存在时）
     交互对齐 webim 的 wecom-bot-config-dialog
+
+  扫码绑定说明：
+    "点击链接" 走懒加载的 window.WecomAIBotSDK.openBotInfoAuthWindow，
+    SDK 通过 workspace 包 `wecom-aibot-sdk` 动态 import 加载（UMD 副作用会挂到 window），
+    扫码通过 onCreated 回调返回 { botid, secret } 自动回填表单。
+    若 SDK 加载失败或未暴露 openBotInfoAuthWindow，均降级到手动填写。
 -->
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
@@ -27,6 +33,40 @@ import {
     defaultChannelSettingsI18nEn,
 } from '../../model/channel';
 import { createChannel, modifyChannel, buildChannelUserId } from '../../service/channelApi';
+
+// ============================================================
+// SDK 类型（window.WecomAIBotSDK，由本地包 wecom-aibot-sdk 副作用挂载）
+// ============================================================
+
+/** 扫码授权成功回调数据 */
+interface WecomAIBotSDKCreatedBot {
+    /** Bot ID */
+    botid?: string;
+    /** Bot Secret */
+    secret?: string;
+}
+
+/** SDK 打开授权窗口的入参 */
+interface WecomAIBotSDKOpenParams {
+    /** 业务来源，透传给企微以便统计 */
+    source: string;
+    /** 扫码创建/授权成功回调 */
+    onCreated?: (bot: WecomAIBotSDKCreatedBot | null | undefined) => void;
+    /** 授权失败回调（用户主动关闭 / 网络失败 / 后台报错） */
+    onError?: (err?: unknown) => void;
+}
+
+/** window.WecomAIBotSDK 接口约束 */
+interface WecomAIBotSDK {
+    openBotInfoAuthWindow: (params: WecomAIBotSDKOpenParams) => void;
+}
+
+/** 声明全局挂载点，避免每处使用都 as any */
+declare global {
+    interface Window {
+        WecomAIBotSDK?: WecomAIBotSDK;
+    }
+}
 
 // ============================================================
 // Props / Emits
@@ -99,6 +139,8 @@ const formData = ref({
 });
 
 const submitting = ref(false);
+/** SDK 是否正在加载中，避免多次点击重复注入 */
+const sdkLoading = ref(false);
 
 /** 是否为重新配置模式 */
 const isModify = computed(() => {
@@ -107,7 +149,9 @@ const isModify = computed(() => {
 
 /** 对话框标题 */
 const dialogTitle = computed(() => {
-    return isModify.value ? '重新配置企微智能机器人' : '企微智能机器人渠道配置';
+    return isModify.value
+        ? mergedI18n.value.wecomBotDialogTitleModify
+        : mergedI18n.value.wecomBotDialogTitleCreate;
 });
 
 // 弹窗打开时初始化表单
@@ -124,6 +168,79 @@ watch(() => props.modelValue, (val) => {
         }
     }
 });
+
+// ============================================================
+// SDK 懒加载 + 扫码
+// ============================================================
+
+/** SDK 加载 Promise 缓存，避免多次点击并发 import */
+let sdkLoadPromise: Promise<void> | null = null;
+
+/**
+ * 按需加载本地 workspace 包 `wecom-aibot-sdk`。
+ * - 该包是官方 UMD 脚本，副作用会挂 window.WecomAIBotSDK。
+ * - 若 window.WecomAIBotSDK 已存在，直接 resolve。
+ * - 若同一 Promise 正在进行中，复用之。
+ */
+function loadWecomAIBotSDK(): Promise<void> {
+    if (typeof window === 'undefined') {
+        return Promise.reject(new Error('window is undefined'));
+    }
+    if (window.WecomAIBotSDK) {
+        return Promise.resolve();
+    }
+    if (sdkLoadPromise) {
+        return sdkLoadPromise;
+    }
+    sdkLoadPromise = import('wecom-aibot-sdk')
+        .then(() => {
+            if (!window.WecomAIBotSDK) {
+                throw new Error('wecom-aibot-sdk loaded but window.WecomAIBotSDK is missing');
+            }
+        })
+        .catch((err) => {
+            sdkLoadPromise = null;
+            throw err;
+        });
+    return sdkLoadPromise;
+}
+
+/**
+ * "点击链接"入口：先按需加载 SDK，再调用 openBotInfoAuthWindow 弹企微扫码窗口。
+ * SDK 回调返回 botid/secret 时自动回填表单，回调失败或 SDK 未暴露入口一律降级到手动填写。
+ */
+const handleOpenWecomLink = async () => {
+    const i18n = mergedI18n.value;
+    if (sdkLoading.value) return;
+    sdkLoading.value = true;
+    try {
+        await loadWecomAIBotSDK();
+        const sdk = window.WecomAIBotSDK;
+        if (!sdk || typeof sdk.openBotInfoAuthWindow !== 'function') {
+            MessagePlugin.warning(i18n.wecomBotSdkNotLoaded);
+            return;
+        }
+        sdk.openBotInfoAuthWindow({
+            source: 'tcadp',
+            onCreated: (bot) => {
+                if (bot?.botid) {
+                    formData.value.botId = bot.botid;
+                }
+                if (bot?.secret) {
+                    formData.value.botSecret = bot.secret;
+                }
+            },
+            onError: () => {
+                MessagePlugin.error(i18n.wecomBotSdkAuthFailed);
+            },
+        });
+    } catch (e) {
+        console.error('[WecomBotConfigDialog] SDK 加载失败:', e);
+        MessagePlugin.error(i18n.wecomBotSdkLoadFailed);
+    } finally {
+        sdkLoading.value = false;
+    }
+};
 
 // ============================================================
 // 提交
@@ -156,7 +273,7 @@ const handleSubmit = async () => {
                     applicationId: props.applicationId,
                     channelId: props.editingChannel!.channelId,
                     channelType: ChannelType.WECOM_ROBOT_WS,
-                    channelName: '企微智能机器人',
+                    channelName: mergedI18n.value.channelNameWecomRobot,
                     channelConfig,
                     userAgent: {
                         userId: buildChannelUserId(props.userId || ''),
@@ -168,7 +285,7 @@ const handleSubmit = async () => {
                     ],
                 },
             );
-            MessagePlugin.success('重新配置成功');
+            MessagePlugin.success(mergedI18n.value.wecomBotModifySuccess);
         } else {
             // 首次配置：调用 CreateChannel
             // 【方案1】UserAgent.UserId 绑「派生的稳定渠道用户 id」（custom-<账号id>），而不是登录账号 id：
@@ -178,7 +295,7 @@ const handleSubmit = async () => {
                 {
                     applicationId: props.applicationId,
                     channelType: ChannelType.WECOM_ROBOT_WS,
-                    channelName: '企微智能机器人',
+                    channelName: mergedI18n.value.channelNameWecomRobot,
                     channelConfig,
                     userAgent: {
                         userId: buildChannelUserId(props.userId || ''),
@@ -186,13 +303,13 @@ const handleSubmit = async () => {
                     },
                 },
             );
-            MessagePlugin.success('渠道创建成功');
+            MessagePlugin.success(mergedI18n.value.wecomBotCreateSuccess);
         }
 
         emit('submitted');
         visible.value = false;
     } catch (err: any) {
-        MessagePlugin.error(err?.message || '配置失败');
+        MessagePlugin.error(err?.message || mergedI18n.value.wecomBotConfigFailed);
     } finally {
         submitting.value = false;
     }
@@ -202,11 +319,11 @@ const handleClose = () => {
     emit('close');
 };
 
-// 表单校验规则
-const rules: FormRules = {
-    botId: [{ required: true, message: '请输入 Bot ID', trigger: 'blur' }],
-    botSecret: [{ required: true, message: '请输入 Bot Secret', trigger: 'blur' }],
-};
+// 表单校验规则（提交时根据 i18n 动态生成，保证多语言切换后 message 也跟随变化）
+const rules = computed<FormRules>(() => ({
+    botId: [{ required: true, message: mergedI18n.value.wecomBotBotIdRequired, trigger: 'blur' }],
+    botSecret: [{ required: true, message: mergedI18n.value.wecomBotSecretRequired, trigger: 'blur' }],
+}));
 </script>
 
 <template>
@@ -225,11 +342,16 @@ const rules: FormRules = {
                 <div class="wbc-tip">
                     <span class="wbc-tip__dot" />
                     <div class="wbc-tip__text">
-                        <!-- <span>获取凭证：</span>
-                        <a class="wbc-tip__link" href="javascript:void(0)">点击链接</a>
-                        <span>用企微扫码快速获取。</span>
-                        <br /> -->
-                        <span>重要提示：一个企微机器人只能绑定一个空间的智能工作台。</span>
+                        <span>{{ mergedI18n.wecomBotTipCredentialPrefix }}</span>
+                        <a
+                            class="wbc-tip__link"
+                            :class="{ 'wbc-tip__link--loading': sdkLoading }"
+                            href="javascript:void(0)"
+                            @click="handleOpenWecomLink"
+                        >{{ mergedI18n.wecomBotTipCredentialLink }}</a>
+                        <span>{{ mergedI18n.wecomBotTipCredentialSuffix }}</span>
+                        <br />
+                        <span>{{ mergedI18n.wecomBotTipImportant }}</span>
                     </div>
                 </div>
 
@@ -244,14 +366,14 @@ const rules: FormRules = {
                     <t-form-item label="Bot ID" name="botId" :required-mark="true">
                         <t-input
                             v-model="formData.botId"
-                            placeholder="请输入"
+                            :placeholder="mergedI18n.wecomBotInputPlaceholder"
                             clearable
                         />
                     </t-form-item>
                     <t-form-item label="Secret" name="botSecret" :required-mark="true">
                         <t-input
                             v-model="formData.botSecret"
-                            placeholder="请输入"
+                            :placeholder="mergedI18n.wecomBotInputPlaceholder"
                             type="password"
                             clearable
                         />
@@ -259,8 +381,10 @@ const rules: FormRules = {
                 </t-form>
 
                 <div class="wbc-footer">
-                    <t-button theme="primary" size="large" :loading="submitting" @click="handleSubmit">确定</t-button>
-                    <t-button size="large" @click="visible = false">取消</t-button>
+                    <t-button theme="primary" size="large" :loading="submitting" @click="handleSubmit">
+                        {{ mergedI18n.wecomBotConfirm }}
+                    </t-button>
+                    <t-button size="large" @click="visible = false">{{ mergedI18n.cancel }}</t-button>
                 </div>
             </div>
         </t-dialog>
@@ -311,6 +435,12 @@ const rules: FormRules = {
 
 .wbc-tip__link:hover {
     text-decoration: underline;
+}
+
+.wbc-tip__link--loading {
+    opacity: 0.6;
+    cursor: wait;
+    pointer-events: none;
 }
 
 /* ---- 表单（对齐 webim credential-form） ---- */

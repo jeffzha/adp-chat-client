@@ -122,6 +122,40 @@ export interface ChannelSettingsI18n {
     detailEmptyValue?: string;
     /** 详情：关闭按钮文案（知道了） */
     detailGotIt?: string;
+
+    // ---- 企微机器人配置弹窗 ----
+    /** 企微机器人配置：新建标题 */
+    wecomBotDialogTitleCreate?: string;
+    /** 企微机器人配置：重新配置标题 */
+    wecomBotDialogTitleModify?: string;
+    /** 企微机器人配置：获取凭证前缀文案 */
+    wecomBotTipCredentialPrefix?: string;
+    /** 企微机器人配置：可点击的链接文案（会渲染为 <a>） */
+    wecomBotTipCredentialLink?: string;
+    /** 企微机器人配置：链接后的描述文案 */
+    wecomBotTipCredentialSuffix?: string;
+    /** 企微机器人配置：重要提示（换行显示） */
+    wecomBotTipImportant?: string;
+    /** 企微机器人配置：输入框 placeholder */
+    wecomBotInputPlaceholder?: string;
+    /** 企微机器人配置：Bot ID 必填校验 */
+    wecomBotBotIdRequired?: string;
+    /** 企微机器人配置：Secret 必填校验 */
+    wecomBotSecretRequired?: string;
+    /** 企微机器人配置：确定按钮 */
+    wecomBotConfirm?: string;
+    /** 企微机器人配置：创建成功提示 */
+    wecomBotCreateSuccess?: string;
+    /** 企微机器人配置：修改成功提示 */
+    wecomBotModifySuccess?: string;
+    /** 企微机器人配置：默认失败提示 */
+    wecomBotConfigFailed?: string;
+    /** 企微机器人配置：SDK 未加载提示 */
+    wecomBotSdkNotLoaded?: string;
+    /** 企微机器人配置：SDK 加载失败提示 */
+    wecomBotSdkLoadFailed?: string;
+    /** 企微机器人配置：SDK 授权失败提示（引导手动填写） */
+    wecomBotSdkAuthFailed?: string;
 }
 
 /** 渠道设置弹窗 i18n 中文默认值 */
@@ -150,6 +184,23 @@ export const defaultChannelSettingsI18n: Required<ChannelSettingsI18n> = {
     detailIlinkIdLabel: 'iLink 账号 ID',
     detailEmptyValue: '暂无',
     detailGotIt: '知道了',
+
+    wecomBotDialogTitleCreate: '企微智能机器人渠道配置',
+    wecomBotDialogTitleModify: '重新配置企微智能机器人',
+    wecomBotTipCredentialPrefix: '获取凭证：',
+    wecomBotTipCredentialLink: '点击链接',
+    wecomBotTipCredentialSuffix: '用企微扫码快速获取。',
+    wecomBotTipImportant: '重要提示：一个企微机器人只能绑定一个空间的智能工作台。',
+    wecomBotInputPlaceholder: '请输入',
+    wecomBotBotIdRequired: '请输入 Bot ID',
+    wecomBotSecretRequired: '请输入 Bot Secret',
+    wecomBotConfirm: '确定',
+    wecomBotCreateSuccess: '渠道创建成功',
+    wecomBotModifySuccess: '重新配置成功',
+    wecomBotConfigFailed: '配置失败',
+    wecomBotSdkNotLoaded: 'WecomAIBotSDK 未配置，请手动填写',
+    wecomBotSdkLoadFailed: '扫码组件加载失败，请手动填写',
+    wecomBotSdkAuthFailed: '获取失败，请手动填写',
 };
 
 /** 渠道设置弹窗 i18n 英文默认值 */
@@ -178,4 +229,21 @@ export const defaultChannelSettingsI18nEn: Required<ChannelSettingsI18n> = {
     detailIlinkIdLabel: 'iLink Account ID',
     detailEmptyValue: 'None',
     detailGotIt: 'Got it',
+
+    wecomBotDialogTitleCreate: 'WeCom Bot Channel Configuration',
+    wecomBotDialogTitleModify: 'Reconfigure WeCom Bot',
+    wecomBotTipCredentialPrefix: 'Get credentials: ',
+    wecomBotTipCredentialLink: 'click here',
+    wecomBotTipCredentialSuffix: ' and scan the QR code with WeCom.',
+    wecomBotTipImportant: 'Note: a WeCom bot can be bound to only one space.',
+    wecomBotInputPlaceholder: 'Please enter',
+    wecomBotBotIdRequired: 'Please enter Bot ID',
+    wecomBotSecretRequired: 'Please enter Bot Secret',
+    wecomBotConfirm: 'Confirm',
+    wecomBotCreateSuccess: 'Channel created',
+    wecomBotModifySuccess: 'Reconfigured successfully',
+    wecomBotConfigFailed: 'Configuration failed',
+    wecomBotSdkNotLoaded: 'WecomAIBotSDK is not configured, please fill in manually',
+    wecomBotSdkLoadFailed: 'Failed to load the QR-code component, please fill in manually',
+    wecomBotSdkAuthFailed: 'Failed to retrieve, please fill in manually',
 };
