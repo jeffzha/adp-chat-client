@@ -1642,7 +1642,7 @@ const handleCreateConversation = () => {
  */
 const handleCronTaskSwitchToChat = async (payload: { task: TimerTask | TimerTaskSummary; triggerId?: string; sessionId?: string; logId?: string; userId?: string }) => {
     const conversationId = payload.sessionId || '';
-    if (!conversationId || currentConversationStateKey.value === conversationId) return;
+    if (!conversationId) return;
 
     const appId = currentApplicationId.value || internalCurrentApplication.value?.ApplicationId || '';
     const userId = payload.userId || 'anonymous';
