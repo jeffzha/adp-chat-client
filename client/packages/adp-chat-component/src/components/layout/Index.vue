@@ -811,22 +811,6 @@ watch(
 );
 
 /**
- * 聊天模式：优先使用 props.mode 手动配置，否则从当前应用的 Pattern 自动推导
- * Pattern='ClawAgent' → mode='claw'，其他值或 null → mode='standard'
- * 提前声明，供下方 watchApplicationId / 各种 v-if 门槛统一使用，避免各处重复判断 Pattern。
- */
-const chatMode = computed<ChatMode>(() => {
-    if (props.mode !== 'standard') {
-        return props.mode;
-    }
-    const pattern = actualCurrentApplication.value?.Pattern as AppPattern | null | undefined;
-    if (pattern === 'ClawAgent') {
-        return 'claw';
-    }
-    return 'standard';
-});
-
-/**
  * 在最外层监听 currentApplicationId 变化，仅在 claw 模式（Pattern='ClawAgent' 或 props.mode='claw'）时触发 Agent 拉取。
  * 非 claw（standard 模式）以及 pattern 尚未就绪的场景一律跳过。
  * 使用 chatMode 而非直接判断 Pattern，可同时兼容"外部强制 claw 模式"与"按 Pattern 自动推导"两种场景。
@@ -3151,7 +3135,7 @@ defineExpose({
                         >
                             <CustomizedIcon remote name="basic_time_line" :theme="theme" />
                         </span>
-                    </Tooltip> -->
+                    </Tooltip>
                     <Tooltip v-if="!isMobile && chatMode !== 'standard'" :content="mergedFilePreviewI18n.openFileList" destroyOnClose showArrow theme="default">
                         <span class="open-file-list-btn" @click="toggleFilePreview">
                             <CustomizedIcon name="open_file_list" :theme="theme" />
