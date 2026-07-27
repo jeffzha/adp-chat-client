@@ -4,7 +4,6 @@ from sanic_restful_api import reqparse
 from sanic.request.types import Request
 from router import login_required
 from core.share import CoreShareConversation
-from core.chat import CoreConversation
 from app_factory import TAgenticApp
 app: TAgenticApp = TAgenticApp.get_app()
 
@@ -17,13 +16,10 @@ class ShareCreateApi(HTTPMethodView):
         parser.add_argument("ApplicationId", type=str, required=True, location="json")
         parser.add_argument("RecordIds", type=list[str], required=True, location="json")
         args = parser.parse_args(request)
-        # print(args['records'])
 
-        application_id = await CoreConversation.get_application_id(
-            request.ctx.db,
-            request.ctx.account_id,
-            args['ConversationId']
-        )
+        # 前端已直接传入 ApplicationId（渠道/定时任务会话场景下该会话在本地
+        # chat_conversation 表中并不存在），跳过本地 DB 查表避免 "conversation not found"
+        application_id = args['ApplicationId']
         vendor_app = app.get_vendor_app(application_id)
 
         # 分页加载所有消息，合并
