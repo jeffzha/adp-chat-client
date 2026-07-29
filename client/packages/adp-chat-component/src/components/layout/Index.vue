@@ -1421,8 +1421,9 @@ const groupChannelMessagesToRecords = (messages: any[], conversationId: string):
     const first = messages[0];
     // 已是分组的 Record 格式
     if (first && Array.isArray(first.Messages)) return messages as Record[];
-    // 扁平格式：按 RecordId 分组
+    // 扁平格式：按 RecordId 分组，保留 Score（RateMsgRecord 后 DescribeConversationMessageList 返回更新后的评分）
     const groups = new Map<string, any>();
+    const groupScores = new Map<string, number>();
     for (const msg of messages) {
         const recordId = msg?.RecordId || '';
         if (!recordId) continue;
@@ -1437,6 +1438,11 @@ const groupChannelMessagesToRecords = (messages: any[], conversationId: string):
                 ExtraInfo: msg.ExtraInfo,
             });
         }
+        // 保留 Score
+        const score = msg?.Score;
+        if (score !== undefined && score !== null && score !== 0) {
+            groupScores.set(recordId, score);
+        }
         groups.get(recordId).Messages.push({
             Type: msg.Type || 'reply',
             MessageId: msg.MessageId || '',
@@ -1449,6 +1455,10 @@ const groupChannelMessagesToRecords = (messages: any[], conversationId: string):
             ExtraInfo: msg.ExtraInfo,
             RecordId: recordId,
         });
+    }
+    // 将评分写入分组后的 Record
+    for (const [recordId, score] of groupScores) {
+        groups.get(recordId).Score = score;
     }
     return Array.from(groups.values()) as Record[];
 };
@@ -1514,10 +1524,15 @@ const handleInternalRate = async (conversationId: string, recordId: string, scor
     }
 
     try {
-        await rateMessage(
-            { ConversationId: conversationId, RecordId: recordId, Score: score },
-            mergedApiDetailConfig.value.rateApi
-        );
+        // 渠道/定时任务会话不在本地 ChatConversation 表中，
+        // 后端 get_application_id 会失败，需附带 ApplicationId 供后端 fallback
+        const isVendorConversation = !!channelConversationUserId.value[conversationId]
+            || (props.currentConversationCronTask && props.currentConversationId === conversationId);
+        const payload: { [key: string]: unknown } = { ConversationId: conversationId, RecordId: recordId, Score: score };
+        if (isVendorConversation) {
+            payload.ApplicationId = currentApplicationId.value || '';
+        }
+        await rateMessage(payload, mergedApiDetailConfig.value.rateApi);
         // 更新本地状态
         const record = getConversationRecords(conversationId).find(r => r.RecordId === recordId);
         if (record) {
