@@ -238,35 +238,56 @@ function getEntityId(item: any): string {
     return getTriggerId(item) || getTimerId(item);
 }
 
+/**
+ * 判断当前上下文（applicationId / scope / userId）是否与请求发起时一致
+ * 用于丢弃"应用切换过程中飞行中的旧请求"，防止跨应用错拼列表
+ */
+function isSameContext(appId: string | undefined, scope: number | undefined, userId: string | undefined): boolean {
+    return appId === props.applicationId && scope === props.scope && userId === props.userId;
+}
+
 async function fetchList() {
     if (loading.value) return;
     if (!props.applicationId) return;   // applicationId 尚未就绪，等待 watch 触发
+    // 请求发起瞬间快照当前上下文
+    const ctxAppId = props.applicationId;
+    const ctxScope = props.scope;
+    const ctxUserId = props.userId;
     loading.value = true;
     try {
         const res = await describeAppTriggerSummaryList(
             {
                 PageNumber: 1,
                 PageSize: props.pageSize,
-                Scope: props.scope,
-                ...(props.userId ? { UserId: props.userId } : {}),
+                Scope: ctxScope,
+                ...(ctxUserId ? { UserId: ctxUserId } : {}),
             },
-            props.applicationId,
+            ctxAppId,
         );
+        // 响应返回时若上下文已切换，丢弃本次结果
+        if (!isSameContext(ctxAppId, ctxScope, ctxUserId)) return;
         // 兼容 trigger_list / TriggerList
         const items = (res as any)?.trigger_list || res?.TriggerList || [];
         list.value = items;
         page.value = 1;
         hasMore.value = items.length >= props.pageSize;
     } catch (e) {
+        if (!isSameContext(ctxAppId, ctxScope, ctxUserId)) return;
         console.error('[CronTaskPanel] fetchList failed:', e);
         MessagePlugin.error(i18n.value.loadFailed);
     } finally {
-        loading.value = false;
+        if (isSameContext(ctxAppId, ctxScope, ctxUserId)) {
+            loading.value = false;
+        }
     }
 }
 
 async function fetchMore() {
     if (loadingMore.value || !hasMore.value) return;
+    if (!props.applicationId) return;
+    const ctxAppId = props.applicationId;
+    const ctxScope = props.scope;
+    const ctxUserId = props.userId;
     loadingMore.value = true;
     try {
         const next = page.value + 1;
@@ -274,11 +295,13 @@ async function fetchMore() {
             {
                 PageNumber: next,
                 PageSize: props.pageSize,
-                Scope: props.scope,
-                ...(props.userId ? { UserId: props.userId } : {}),
+                Scope: ctxScope,
+                ...(ctxUserId ? { UserId: ctxUserId } : {}),
             },
-            props.applicationId,
+            ctxAppId,
         );
+        // 上下文已切换（例如用户切了应用），本次追加丢弃
+        if (!isSameContext(ctxAppId, ctxScope, ctxUserId)) return;
         const items = (res as any)?.trigger_list || res?.TriggerList || [];
         const existing = new Set(list.value.map((t) => getEntityId(t)));
         items.forEach((t: any) => {
@@ -287,9 +310,12 @@ async function fetchMore() {
         page.value = next;
         hasMore.value = items.length >= props.pageSize;
     } catch (e) {
+        if (!isSameContext(ctxAppId, ctxScope, ctxUserId)) return;
         console.error('[CronTaskPanel] fetchMore failed:', e);
     } finally {
-        loadingMore.value = false;
+        if (isSameContext(ctxAppId, ctxScope, ctxUserId)) {
+            loadingMore.value = false;
+        }
     }
 }
 
@@ -297,6 +323,10 @@ async function fetchMore() {
  * 操作成功后按当前已加载条数重新拉取
  */
 async function refreshAfterAction() {
+    if (!props.applicationId) return;
+    const ctxAppId = props.applicationId;
+    const ctxScope = props.scope;
+    const ctxUserId = props.userId;
     const total = list.value.length;
     const pages = Math.max(1, Math.ceil(total / props.pageSize));
     try {
@@ -307,14 +337,16 @@ async function refreshAfterAction() {
                     {
                         PageNumber: p,
                         PageSize: props.pageSize,
-                        Scope: props.scope,
-                        ...(props.userId ? { UserId: props.userId } : {}),
+                        Scope: ctxScope,
+                        ...(ctxUserId ? { UserId: ctxUserId } : {}),
                     },
-                    props.applicationId,
+                    ctxAppId,
                 ),
             );
         }
         const responses = await Promise.all(requests);
+        // 上下文已切换，丢弃本次刷新结果（新上下文的 watch 已经/即将触发 fetchList）
+        if (!isSameContext(ctxAppId, ctxScope, ctxUserId)) return;
         const seen = new Set<string>();
         const newList: any[] = [];
         responses.forEach((res) => {
@@ -334,9 +366,12 @@ async function refreshAfterAction() {
             []) as any[];
         hasMore.value = lastItems.length >= props.pageSize;
     } catch (e) {
+        if (!isSameContext(ctxAppId, ctxScope, ctxUserId)) return;
         console.error('[CronTaskPanel] refreshAfterAction failed:', e);
     }
-    emit('refresh');
+    if (isSameContext(ctxAppId, ctxScope, ctxUserId)) {
+        emit('refresh');
+    }
 }
 
 // ─── 滚动 ──────────────────────────────────────────────
@@ -432,16 +467,28 @@ async function onRunNow(task: any) {
 }
 
 // ─── 生命周期 ──────────────────────────────────────────
-// 组件挂载后，等 applicationId 就绪再拉取列表
-// 场景：父组件可能在后续异步流程中才注入 appid，避免空值请求
-let _initFetched = false;
+// 监听上下文三要素（applicationId / scope / userId）：
+// - 首次从空 → 有值：拉取列表
+// - 切换应用 / 切换 scope / 切换 userId：重置分页并重新拉取
+// - 飞行中的旧请求由各 fetch 函数内部的 isSameContext 校验丢弃
 watch(
-    () => props.applicationId,
-    (id) => {
-        if (id && !_initFetched) {
-            _initFetched = true;
-            fetchList();
+    () => [props.applicationId, props.scope, props.userId] as const,
+    (newVal, oldVal) => {
+        const [appId] = newVal;
+        if (!appId) return;
+        // 首次触发（oldVal 为 undefined）视为初始化，直接拉取
+        // 后续触发：任一维度变化都重置分页并重拉
+        if (oldVal) {
+            const [oldAppId, oldScope, oldUserId] = oldVal;
+            const contextChanged =
+                appId !== oldAppId || props.scope !== oldScope || props.userId !== oldUserId;
+            if (contextChanged) {
+                list.value = [];
+                page.value = 1;
+                hasMore.value = true;
+            }
         }
+        fetchList();
     },
     { immediate: true },
 );
