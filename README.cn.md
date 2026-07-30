@@ -414,36 +414,95 @@ ADP_VISITOR_ID_TYPE=NAME
 
 调用智能体对话时，可以向智能体传递参数，根据具体情况，可以选择在前端还是后端进行传递，这是一个后端附加API参数的示例
 
+> ⚠️ **重要约定**：`/chat/message` 是 SSE 流式接口，已被 `middleware/database.py` 的
+> `_SKIP_SESSION_PATHS` 白名单排除，`request.ctx` 上**没有** `db` 属性。若直接使用
+> `request.ctx.db` 会抛 `AttributeError`。正确做法是使用 `util.database.db_connection()`
+> 上下文管理器"短借短还"，并且**必须在 streaming 之外**完成 DB 访问，避免把连接占进
+> SSE 长连接里耗尽连接池。
+
 ```python
 # 编辑文件：server/router/chat.py
+from core.account import CoreAccount
+from core.conversation import CoreConversation
+from core.share import CoreShareConversation
+from util.database import db_connection
+from app_factory import TAgenticApp
+app: TAgenticApp = TAgenticApp.get_app()
+
+
+async def _build_extra_custom_variables(account_id: str) -> dict:
+    """从 DB 读取账号信息，构造要注入 ADP CustomVariables 的额外字段。
+
+    重要约定：
+    - /chat/message 走 SSE，中间件不注入 request.ctx.db，必须自己借还连接
+    - 借用范围要"最小化"，读完立刻还，绝不能跨越 SSE 流生命周期
+    - ADP 侧 CustomVariables 的 value 必须是 string，dict/list 需 json.dumps
+    """
+    import json  # 局部导入，避免影响模块加载顺序
+    async with db_connection() as db:
+        account = await CoreAccount.get(db, account_id)
+        account_third_party = await CoreAccount.get_third_party(db, account_id)
+    if account is None:
+        raise SanicException("account not found", status_code=401)
+
+    extra: dict = {
+        "account": json.dumps({
+            "id": account_third_party.OpenId if account_third_party else str(account.Id),
+            "name": account.Name or "",
+        }, ensure_ascii=False),
+    }
+    # 如果 ExtraInfo 里还有自定义字段，需要平铺给 ADP，可在此处补充
+    return extra
+
+
 class ChatMessageApi(HTTPMethodView):
     @login_required
     async def post(self, request: Request):
         parser = reqparse.RequestParser()
-        parser.add_argument("Query", type=str, required=True, location="json")
+        parser.add_argument("Contents", type=list, required=True, location="json")
         parser.add_argument("ConversationId", type=str, location="json")
         parser.add_argument("ApplicationId", type=str, location="json")
         parser.add_argument("SearchNetwork", type=bool, default=True, location="json")
         parser.add_argument("CustomVariables", type=dict, default={}, location="json")
+        # 渠道会话（企微 / 微信 Bot 等）：vendor 侧才是权威数据源，
+        # 本地不落地 chat_conversation，避免污染 /chat/conversations 侧栏列表。
+        parser.add_argument("IsChannel", type=bool, default=False, location="json")
         args = parser.parse_args(request)
         logging.info(f"ChatMessageApi: {args}")
 
         application_id = args['ApplicationId']
         vendor_app = app.get_vendor_app(application_id)
 
-        # 新增以下代码，就能在对话时附加额外的API参数：
-        import json
-        from core.account import CoreAccount
-        account = await CoreAccount.get(request.ctx.db, request.ctx.account_id)
-        account_third_party = await CoreAccount.get_third_party(request.ctx.db, request.ctx.account_id)
-        # 注意这里的json.dumps，腾讯云ADP约定：如果值是字典，需要进行一次json编码，转换为json字符串
-        args['CustomVariables']['account'] = json.dumps({
-            "id": account_third_party.OpenId if account_third_party else str(account.Id),
-            "name": account.Name if account else "",
-        })
+        # 附加后端自定义参数（例如账号信息）。必须在 streaming_fn 之外完成 DB 访问：
+        # /chat/message 在 middleware/database.py 的 _SKIP_SESSION_PATHS 白名单中，
+        # request.ctx 上没有 db 属性，且 SSE 响应可能持续数十秒，绝不能把连接带进流里。
+        args['CustomVariables'].update(
+            await _build_extra_custom_variables(request.ctx.account_id)
+        )
+
         logging.info(f"[ChatMessageApi] ApplicationId: {application_id},\n\
             CustomVariables: {args['CustomVariables']},\n\
+            IsChannel: {args['IsChannel']},\n\
             vendor_app: {vendor_app}")
+
+        async def streaming_fn(response):
+            chat_gen = CoreChat.message(
+                vendor_app,
+                request.ctx.account_id,
+                args['Contents'],
+                args['ConversationId'],
+                args['SearchNetwork'],
+                args['CustomVariables'],
+                is_channel=args['IsChannel'],
+            )
+            try:
+                async for data in chat_gen:
+                    await response.write(data)
+            except asyncio.CancelledError:
+                logging.info("[ChatMessageApi] Client disconnected, closing upstream")
+                await chat_gen.aclose()
+                raise
+        return ResponseStream(streaming_fn, content_type='text/event-stream; charset=utf-8')
 
 ```
 
