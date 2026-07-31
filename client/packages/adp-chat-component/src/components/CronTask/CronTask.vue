@@ -5,27 +5,30 @@
             ref="panelRef"
             :application-id="applicationId"
             :space-id="spaceId"
+            :scope="scope"
+            :user-id="userId"
             :theme="theme"
             :language="language"
             :i18n="props.i18n"
-            :model-options="modelOptions"
-            :folder-options="folderOptions"
             :page-size="pageSize"
+            :create-conversation-text="createConversationText"
             @select-task="handleSelectTask"
             @run-and-view="onRunAndView"
             @optimize-prompt="onOptimizePrompt"
             @refresh="onRefresh"
+            @toggle-sidebar="emit('toggle-sidebar')"
+            @create-conversation="emit('create-conversation')"
         />
         <CronTaskDetail
             v-else-if="currentView === 'detail'"
             :task="currentTask"
             :application-id="applicationId"
             :space-id="spaceId"
+            :scope="scope"
+            :user-id="userId"
             :theme="theme"
             :language="language"
             :i18n="props.i18n"
-            :model-options="modelOptions"
-            :folder-options="folderOptions"
             :poll-interval="pollInterval"
             @back="handleBackToList"
             @switch-to-chat="onSwitchToChat"
@@ -45,46 +48,58 @@ import type {
     TimerTask,
     TimerTaskSummary,
 } from '../../model/cronTask';
+import { AppTriggerScope } from '../../model/appTrigger';
 
 export interface Option { label: string; value: string }
 
 export interface Props extends ThemeProps {
     /** 应用 ID（/adp 代理必需） */
     applicationId: string;
-    /** 空间 ID */
+    /** @deprecated AppTrigger 不再依赖 spaceId，保留以兼容旧调用方 */
     spaceId?: string;
+    /**
+     * 触发器作用域，proto AppTriggerScope。
+     * - USER(2)：C 端访客，默认；需同时传 userId。
+     * - APP(1)：B 端管理员，user_id 可省略。
+     */
+    scope?: number;
+    /** C 端访客 ID；scope=USER 时必填 */
+    userId?: string;
     /** 语言 */
     language?: string;
     /** i18n 覆盖 */
     i18n?: Partial<CronTaskI18n>;
-    /** 模型选项（编辑对话框用） */
-    modelOptions?: Option[];
-    /** 关联文件夹选项（编辑对话框用） */
-    folderOptions?: Option[];
     /** 分页大小 */
     pageSize?: number;
     /** 详情页运行日志轮询间隔（ms） */
     pollInterval?: number;
+    /** 新建对话按钮的 tooltip 文案（对齐主区 header 的"新建对话"） */
+    createConversationText?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
     ...themePropsDefaults,
     spaceId: '',
+    scope: AppTriggerScope.USER,
+    userId: '',
     language: 'zh-CN',
     i18n: () => ({}),
-    modelOptions: () => [],
-    folderOptions: () => [],
     pageSize: 20,
     pollInterval: 10 * 1000,
+    createConversationText: '',
 });
 
 const emit = defineEmits<{
     (e: 'run-and-view', task: any): void;
     (e: 'optimize-prompt', content: string): void;
     (e: 'refresh'): void;
-    (e: 'switch-to-chat', payload: { task: any; sessionId?: string; logId?: string }): void;
+    (e: 'switch-to-chat', payload: { task: any; triggerId?: string; sessionId?: string; logId?: string; userId?: string }): void;
     (e: 'action-done', action: string, task: any): void;
     (e: 'view-change', view: 'list' | 'detail'): void;
+    /** 收起/展开侧边栏（对齐主区 header 的收起按钮） */
+    (e: 'toggle-sidebar'): void;
+    /** 新建对话（对齐主区 header 的新建对话按钮） */
+    (e: 'create-conversation'): void;
 }>();
 
 // ============================================================
@@ -121,6 +136,20 @@ function refreshList() {
     return panelRef.value?.fetchList?.();
 }
 
+/**
+ * 供外部调用：无论当前处于 detail / list，都重置为初始 list 视图
+ * 用于"再次点击定时任务入口"时回到初始态。
+ */
+function resetToList() {
+    if (currentView.value !== 'list') {
+        currentView.value = 'list';
+        emit('view-change', 'list');
+    }
+    currentTask.value = null;
+    // 刷新列表，感知可能的外部变更
+    panelRef.value?.refreshAfterAction?.();
+}
+
 // ============================================================
 // 事件透传
 // ============================================================
@@ -133,14 +162,14 @@ function onOptimizePrompt(content: string) {
 function onRefresh() {
     emit('refresh');
 }
-function onSwitchToChat(payload: { task: any; sessionId?: string; logId?: string }) {
+function onSwitchToChat(payload: { task: any; triggerId?: string; sessionId?: string; logId?: string; userId?: string }) {
     emit('switch-to-chat', payload);
 }
 function onActionDone(action: string, task: any) {
     emit('action-done', action, task);
 }
 
-defineExpose({ showTaskDetail, refreshList });
+defineExpose({ showTaskDetail, refreshList, resetToList });
 </script>
 
 <style scoped>

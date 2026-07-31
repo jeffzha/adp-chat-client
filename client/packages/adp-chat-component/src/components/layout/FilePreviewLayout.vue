@@ -270,6 +270,7 @@ defineExpose({
                     :download-text="i18n.download"
                     :download-started-text="i18n.downloadStarted"
                     :loading-text="i18n.loading"
+                    :empty-text="i18n.emptyFile"
                     @select="handleFileDirSelect"
                     @close="handleCloseDir"                    
                 />

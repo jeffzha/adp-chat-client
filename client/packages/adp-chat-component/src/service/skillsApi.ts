@@ -194,9 +194,9 @@ export async function fetchSkillSummaryList(params: {
 }> {
     const { applicationId, ...rest } = params;
     // filter_list → proto Filter { Name, ValueList }（v2 格式）
-    const filters = (rest.filter_list || []).map((f: Record<string, unknown>) => ({
+    const filterList = (rest.filter_list || []).map((f: Record<string, unknown>) => ({
         Name: f.key || f.Key || f.name || f.Name || '',
-        Values: f.values || f.Values || f.valueList || f.ValueList || [],
+        ValueList: f.values || f.Values || f.valueList || f.ValueList || [],
     }));
     const data = await forwardRequest(
         apiPath || defaultSkillsApiConfig.skillSummaryListApi!,
@@ -204,13 +204,13 @@ export async function fetchSkillSummaryList(params: {
         {
             SpaceId: rest.space_id || '',
             Query: rest.query || '',
-            Filters: filters,
+            FilterList: filterList,
             FavoriteOnly: !!rest.favorite_only,
             PageSize: rest.page_size || 12,
             PageNumber: rest.page_number || 0,
         },
     );
-    const rawList = (data.SkillList || data.skill_list || data.SkillSummaryList || []) as Record<string, unknown>[];
+    const rawList = (data.SkillSummaryList || data.SkillList || data.skill_list || []) as Record<string, unknown>[];
     return {
         skill_list: rawList,
         total_count: (data.TotalCount || data.total_count || data.Total || 0) as number,

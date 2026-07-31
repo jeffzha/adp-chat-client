@@ -21,6 +21,11 @@ import type { CapiConversationItem } from '../../service/api';
 import CustomizedIcon from '../CustomizedIcon.vue';
 import type { ThemeProps } from '../../model/type';
 import { themePropsDefaults } from '../../model/type';
+import {
+    type ChannelSettingsI18n,
+    defaultChannelSettingsI18n,
+    defaultChannelSettingsI18nEn,
+} from '../../model/channel';
 
 interface ConversationItem {
     /** 会话 ID */
@@ -56,6 +61,12 @@ interface Props extends ThemeProps {
     pageSize?: number;
     /** 轮询间隔（ms），0 表示不轮询 */
     pollInterval?: number;
+    /** 是否为移动端：移动端改为右侧抽屉 + 背景模糊遮罩，点击遮罩关闭；PC 端保持右推面板 */
+    isMobile?: boolean;
+    /** 语言 */
+    language?: string;
+    /** i18n 覆盖 */
+    i18n?: Partial<ChannelSettingsI18n>;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -70,6 +81,9 @@ const props = withDefaults(defineProps<Props>(), {
     describeConversationListApi: '',
     pageSize: 50,
     pollInterval: 10000,
+    isMobile: false,
+    language: 'zh-CN',
+    i18n: () => ({}),
 });
 
 const emit = defineEmits<{
@@ -81,6 +95,14 @@ const emit = defineEmits<{
     (e: 'loaded', items: ConversationItem[]): void;
 }>();
 
+/** 合并 i18n */
+const mergedI18n = computed<Required<ChannelSettingsI18n>>(() => {
+    const defaults = props.language?.startsWith('en')
+        ? defaultChannelSettingsI18nEn
+        : defaultChannelSettingsI18n;
+    return { ...defaults, ...props.i18n };
+});
+
 const loading = ref(false);
 const refreshing = ref(false);
 const conversations = ref<ConversationItem[]>([]);
@@ -90,7 +112,7 @@ let lastFetchId = 0;
 /** 轮询 timer */
 let pollingTimer: ReturnType<typeof setInterval> | null = null;
 
-const panelTitle = computed(() => (props.channelLabel ? `${props.channelLabel}会话` : '渠道会话'));
+const panelTitle = computed(() => (props.channelLabel ? `${props.channelLabel}${mergedI18n.value.ccpPanelTitle}` : mergedI18n.value.ccpPanelTitle));
 
 /**
  * 归一化 CAPI 返回项 → ConversationItem
@@ -106,7 +128,7 @@ const normalizeItem = (raw: CapiConversationItem): ConversationItem => {
     }
     return {
         id: raw.ConversationId || '',
-        title: (raw.Title as string) || '未命名',
+        title: (raw.Title as string) || mergedI18n.value.ccpUnnamed,
         lastActiveAt: ts,
     };
 };
@@ -214,15 +236,16 @@ const handleSelect = (conv: ConversationItem) => {
     // 不关闭面板，保持展开供用户继续切换（对齐 webim handleSelectChannelConversation）
 };
 
-/** 时间格式化：小于 1 分钟显示"刚刚"，小于 1 小时显示"N 分钟前"，小于 1 天显示"N 小时前"，超过 1 天显示"MM/DD" */
+/** 时间格式化：小于 1 分钟显示 i18n.justNow，小于 1 小时显示 i18n.minutesAgo，小于 1 天显示 i18n.hoursAgo，超过 1 天显示"MM/DD" */
 const formatTime = (ts: number): string => {
     if (!ts) return '';
     const d = new Date(ts);
     if (!Number.isFinite(d.getTime())) return '';
     const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
-    if (diffMin < 1) return '刚刚';
-    if (diffMin < 60) return `${diffMin}分钟前`;
-    if (diffMin < 1440) return `${Math.floor(diffMin / 60)}小时前`;
+    const i = mergedI18n.value;
+    if (diffMin < 1) return i.ccpJustNow;
+    if (diffMin < 60) return i.ccpMinutesAgo.replace('{n}', String(diffMin));
+    if (diffMin < 1440) return i.ccpHoursAgo.replace('{n}', String(Math.floor(diffMin / 60)));
     return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
 };
 
@@ -233,12 +256,15 @@ defineExpose({
 </script>
 
 <template>
-    <div v-if="visible" class="channel-conversation-panel">
+    <template v-if="visible">
+        <!-- 移动端毛玻璃遮罩：点击关闭抽屉（对齐 sider 移动端 .mobile-overlay） -->
+        <div v-if="isMobile" class="ccp-backdrop" @click="emit('close')"></div>
+    <div class="channel-conversation-panel" :class="{ 'channel-conversation-panel--mobile': isMobile }">
         <!-- Header：结构对齐 FileDir header（title + refresh + close） -->
         <div class="ccp-header">
             <span class="ccp-header__title">{{ panelTitle }}</span>
             <div class="ccp-header__actions">
-                <span class="ccp-header__action" :title="'刷新'" @click="handleRefresh">
+                <span class="ccp-header__action" :title="mergedI18n.ccpRefresh" @click="handleRefresh">
                     <CustomizedIcon
                         remote
                         size="xs"
@@ -248,7 +274,7 @@ defineExpose({
                         :theme="theme"
                     />
                 </span>
-                <span class="ccp-header__action" :title="'关闭'" @click="emit('close')">
+                <span class="ccp-header__action" :title="mergedI18n.ccpClose" @click="emit('close')">
                     <CustomizedIcon
                         remote
                         size="xs"
@@ -264,7 +290,7 @@ defineExpose({
         <div class="ccp-body">
             <div v-if="loading" class="ccp-loading">
                 <TIcon name="loading" class="icon-spinning" />
-                <span>加载中...</span>
+                <span>{{ mergedI18n.ccpLoading }}</span>
             </div>
             <div v-else-if="conversations.length === 0" class="ccp-empty">
                 <CustomizedIcon
@@ -275,7 +301,7 @@ defineExpose({
                     :showHoverBg="false"
                     :theme="theme"
                 />
-                <p class="ccp-empty__text">暂无会话</p>
+                <p class="ccp-empty__text">{{ mergedI18n.ccpEmpty }}</p>
             </div>
             <div v-else class="ccp-list">
                 <div
@@ -291,6 +317,7 @@ defineExpose({
             </div>
         </div>
     </div>
+    </template>
 </template>
 
 <style scoped>
@@ -307,13 +334,47 @@ defineExpose({
     flex-shrink: 0;
 }
 
+/* ---------------- 移动端：右侧抽屉 + 背景模糊遮罩（对齐 sider 移动端行为） ---------------- */
+.ccp-backdrop {
+    position: absolute;
+    inset: 0;
+    background: var(--td-mask-disabled);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 99;
+    animation: ccp-backdrop-fade-in 0.2s ease;
+}
+
+.channel-conversation-panel--mobile {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    height: 100%;
+    width: 85%;
+    min-width: 0;
+    max-width: 320px;
+    z-index: 100;
+    box-shadow: var(--td-shadow-3, -2px 0 12px rgba(0, 0, 0, 0.12));
+    animation: ccp-drawer-slide-in 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes ccp-backdrop-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes ccp-drawer-slide-in {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+}
+
 /* ---------------- Header（对齐 .file-dir-header） ---------------- */
 .ccp-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: var(--td-comp-paddingTB-m) var(--td-comp-paddingLR-l);
-    border-bottom: 1px solid var(--td-border-level-1-color);
     flex-shrink: 0;
     line-height: 31px;
 }
@@ -365,6 +426,25 @@ defineExpose({
     flex: 1;
     overflow-y: auto;
     padding: var(--td-comp-paddingTB-s) var(--td-comp-paddingLR-s);
+    /* 滚动条：对齐 tcadp 统一样式（SideLayout/chat-overrides） */
+    scrollbar-color: var(--td-scrollbar-color) transparent;
+    scrollbar-width: thin;
+}
+
+.ccp-body::-webkit-scrollbar {
+    width: 6px;
+    background: transparent;
+}
+
+.ccp-body::-webkit-scrollbar-thumb {
+    border: 1.5px solid transparent;
+    background-clip: content-box;
+    background-color: var(--td-scrollbar-color);
+    border-radius: var(--td-radius-round);
+}
+
+.ccp-body::-webkit-scrollbar-thumb:hover {
+    background-color: var(--td-scrollbar-hover-color);
 }
 
 .ccp-loading {

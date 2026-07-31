@@ -61,6 +61,52 @@ export interface ModelOption {
 /** 选中模型（与 ModelOption 兼容） */
 export type SelectedModel = Partial<ModelOption> & { value?: string; text?: string };
 
+/** 模型选择器 i18n 文本 */
+export interface ModelSelectorI18n {
+    /** 触发器占位（未选中时） */
+    placeholder?: string;
+    /** 升级提示（第三方模型受限时 tooltip 文案） */
+    upgradeTip?: string;
+    /** 升级按钮 */
+    upgradeAction?: string;
+    /** 分组头「升级」标签 */
+    upgradeTag?: string;
+    /** 搜索框 placeholder */
+    searchPlaceholder?: string;
+    /** 加载中 */
+    loading?: string;
+    /** 暂无数据 */
+    empty?: string;
+    /** 资源不可用 */
+    resourceUnavailable?: string;
+    /** 切换模型失败 toast */
+    switchModelFailed?: string;
+}
+
+const defaultModelSelectorI18n: Required<ModelSelectorI18n> = {
+    placeholder: '请选择',
+    upgradeTip: '企业版可使用第三方模型',
+    upgradeAction: '去升级',
+    upgradeTag: '升级',
+    searchPlaceholder: '搜索',
+    loading: '加载中...',
+    empty: '暂无数据',
+    resourceUnavailable: '资源不可用',
+    switchModelFailed: '切换模型失败',
+};
+
+const defaultModelSelectorI18nEn: Required<ModelSelectorI18n> = {
+    placeholder: 'Select',
+    upgradeTip: 'Enterprise plan required to use third-party models',
+    upgradeAction: 'Upgrade',
+    upgradeTag: 'Upgrade',
+    searchPlaceholder: 'Search',
+    loading: 'Loading...',
+    empty: 'No data',
+    resourceUnavailable: 'Resource unavailable',
+    switchModelFailed: 'Failed to switch model',
+};
+
 interface Props extends ThemeProps {
     /** 候选模型列表（受控逗逃口：传入非空数组时使用父层数据，否则由组件内部拉取） */
     options?: ModelOption[];
@@ -68,7 +114,10 @@ interface Props extends ThemeProps {
     selected?: SelectedModel;
     /** 历史对话选中的模型（用于非企业版时保留显示） */
     historyModel?: SelectedModel | null;
-    /** 占位文案 */
+    /**
+     * 占位文案（外部 prop 优先；未传时由 i18n.placeholder → language 默认值 fallback）
+     * @deprecated 优先使用 `i18n.placeholder`，本 prop 仅为兼容旧调用方。
+     */
     placeholder?: string;
     /** 是否为按钮模式（紧凑形态） */
     isButtonMode?: boolean;
@@ -77,9 +126,15 @@ interface Props extends ThemeProps {
     /** 是否为海外站（海外站所有套餐都可使用第三方模型） */
     isIntl?: boolean;
 
-    /** 升级提示文案 */
+    /**
+     * 升级提示文案（外部 prop 优先；未传时由 i18n.upgradeTip → language 默认值 fallback）
+     * @deprecated 优先使用 `i18n.upgradeTip`。
+     */
     upgradeTipText?: string;
-    /** 升级按钮文案 */
+    /**
+     * 升级按钮文案（外部 prop 优先；未传时由 i18n.upgradeAction → language 默认值 fallback）
+     * @deprecated 优先使用 `i18n.upgradeAction`。
+     */
     upgradeActionText?: string;
     /** 弹层最大高度 */
     listMaxHeight?: number;
@@ -87,6 +142,10 @@ interface Props extends ThemeProps {
     autoFetch?: boolean;
     /** 应用 ID（用于拉取模型列表时传递 AppBizId） */
     applicationId?: string;
+    /** 当前语言标识，用于自动选择内部默认 i18n（如 'zh-CN'、'en-US'） */
+    language?: string;
+    /** 组件内文案 i18n 覆盖 */
+    i18n?: Partial<ModelSelectorI18n>;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -94,16 +153,18 @@ const props = withDefaults(defineProps<Props>(), {
     options: () => [],
     selected: () => ({} as SelectedModel),
     historyModel: null,
-    placeholder: '请选择',
+    placeholder: '',
     isButtonMode: false,
     isEnterpriseUser: true,
     isIntl: false,
 
-    upgradeTipText: '企业版可使用第三方模型',
-    upgradeActionText: '去升级',
+    upgradeTipText: '',
+    upgradeActionText: '',
     listMaxHeight: 264,
     autoFetch: true,
     applicationId: '',
+    language: 'zh-CN',
+    i18n: () => ({}),
 });
 
 const emit = defineEmits<{
@@ -129,6 +190,23 @@ const innerOptions = ref<ModelOption[]>([]);
 const loading = ref(false);
 /** 内部选中状态（优先使用 props.selected，否则使用内部维护的值） */
 const innerSelected = ref<ModelOption | null>(null);
+
+/**
+ * 合并 i18n：按 language 选择内部默认（zh/en），再叠加外部 props.i18n。
+ */
+const mergedI18n = computed<Required<ModelSelectorI18n>>(() => {
+    const defaults = props.language?.startsWith('en')
+        ? defaultModelSelectorI18nEn
+        : defaultModelSelectorI18n;
+    return { ...defaults, ...props.i18n };
+});
+
+/** 触发器占位文案：外部 prop 优先，其次走 i18n */
+const displayPlaceholder = computed(() => props.placeholder || mergedI18n.value.placeholder);
+/** 升级提示文案 */
+const displayUpgradeTip = computed(() => props.upgradeTipText || mergedI18n.value.upgradeTip);
+/** 升级按钮文案 */
+const displayUpgradeAction = computed(() => props.upgradeActionText || mergedI18n.value.upgradeAction);
 
 /** 监听外部 props.selected 变化，同步更新内部状态 */
 watch(
@@ -398,7 +476,7 @@ async function handlePick(model: ModelOption) {
         });
     } catch (err) {
         console.error('[ModelSelector] ModifyAgent 切换模型失败:', err);
-        MessagePlugin.error('切换模型失败');
+        MessagePlugin.error(mergedI18n.value.switchModelFailed);
         // 4) 失败回滚：恢复到提交前的选中态
         innerSelected.value = prevSelected;
         if (prevSelected) {
@@ -463,7 +541,7 @@ watch(popupVisible, (v) => {
                             <img :src="currentSelected.icon" alt="" />
                         </span>
                         <span class="model-selector__trigger-text" :title="currentSelected && currentSelected.text">
-                            {{ (currentSelected && currentSelected.text) || placeholder }}
+                            {{ (currentSelected && currentSelected.text) || displayPlaceholder }}
                         </span>
                         <!-- 模型切换中：在模型名称右侧显示 loading 图标，提示后台保存中 -->
                         <t-loading v-if="switchingModel" size="14px" class="model-selector__switching" />
@@ -492,7 +570,7 @@ watch(popupVisible, (v) => {
                             <img :src="currentSelected.icon" alt="" />
                         </span>
                         <span class="model-selector__trigger-text" :title="currentSelected && currentSelected.text">
-                            {{ (currentSelected && currentSelected.text) || placeholder }}
+                            {{ (currentSelected && currentSelected.text) || displayPlaceholder }}
                         </span>
                         <!-- 模型切换中：在模型名称右侧显示 loading 图标 -->
                         <t-loading v-if="switchingModel" size="14px" class="model-selector__switching" />
@@ -510,7 +588,7 @@ watch(popupVisible, (v) => {
                         <t-tooltip v-if="isSelectedResourceExhausted" placement="top">
                             <template #content>
                                 <slot name="resourceErrorTip" :is-exclusive="currentSelected && currentSelected.is_exclusive">
-                                    <span>资源不可用</span>
+                                    <span>{{ mergedI18n.resourceUnavailable }}</span>
                                 </slot>
                             </template>
                             <CustomizedIcon remote class="model-selector__warning-icon" name="basic_warning_line" size="s" :show-hover-bg="false" :theme="theme" color="var(--td-error-color)" />
@@ -526,7 +604,7 @@ watch(popupVisible, (v) => {
                     <t-input
                         v-model="searchValue"
                         class="model-selector__search"
-                        placeholder="搜索"
+                        :placeholder="mergedI18n.searchPlaceholder"
                         clearable
                         @clear="handleClear"
                     >
@@ -556,14 +634,14 @@ watch(popupVisible, (v) => {
                                     >
                                         <template #content>
                                             <div class="model-selector__upgrade-tip-content">
-                                                <span>{{ upgradeTipText }}</span>
+                                                <span>{{ displayUpgradeTip }}</span>
                                                 <t-button
                                                     theme="primary"
                                                     variant="text"
                                                     
                                                     @click="handleUpgradeClick"
                                                 >
-                                                    {{ upgradeActionText }}
+                                                    {{ displayUpgradeAction }}
                                                 </t-button>
                                             </div>
                                         </template>
@@ -571,7 +649,7 @@ watch(popupVisible, (v) => {
                                             <template #icon>
                                                 <CustomizedIcon remote name="basic_star_line" size="s" :show-hover-bg="false" :theme="theme" />
                                             </template>
-                                            升级
+                                            {{ mergedI18n.upgradeTag }}
                                         </t-tag>
                                     </t-tooltip>
                                 </div>
@@ -637,7 +715,7 @@ watch(popupVisible, (v) => {
                                             >
                                                 <template #content>
                                                     <slot name="resourceErrorTip" :is-exclusive="item.is_exclusive">
-                                                        <span>资源不可用</span>
+                                                        <span>{{ mergedI18n.resourceUnavailable }}</span>
                                                     </slot>
                                                 </template>
                                                 <CustomizedIcon
@@ -679,10 +757,10 @@ watch(popupVisible, (v) => {
 
                         <!-- 空数据 -->
                         <div v-else-if="loading" class="model-selector__empty">
-                            加载中...
+                            {{ mergedI18n.loading }}
                         </div>
                         <div v-else class="model-selector__empty">
-                            暂无数据
+                            {{ mergedI18n.empty }}
                         </div>
                     </div>
 

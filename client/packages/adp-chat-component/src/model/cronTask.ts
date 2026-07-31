@@ -19,10 +19,19 @@ export const TimerTaskStatus = {
 } as const;
 export type TimerTaskStatusValue = typeof TimerTaskStatus[keyof typeof TimerTaskStatus];
 
-/** 单次运行状态 */
+/**
+ * 单次运行状态。
+ * 严格对齐 proto `TimerRunStatus`（time_scheduler.proto）：
+ *   0 UNSPECIFIED / 1 PENDING / 2 RUNNING / 3 RETRY_WAIT
+ *   / 4 SUCCESS / 5 DEAD(失败终态) / 6 CANCELLED
+ *
+ * 注意：AppTriggerRunLog.status / AppTriggerInstance.status 均使用该枚举，
+ *   前后端必须一致。历史上前端错把 3=SUCCESS/4=FAILED/5=CANCELED/6=TIMEOUT，
+ *   会导致 DescribeAppTriggerRunLogList 返回状态与 UI 显示不一致，务必勿改回。
+ */
 export const TimerRunStatus = {
     UNSPECIFIED: 0,
-    /** 等待中 */
+    /** 等待执行 */
     PENDING: 1,
     /** 运行中 */
     RUNNING: 2,
@@ -32,8 +41,12 @@ export const TimerRunStatus = {
     SUCCESS: 4,
     /** 已死亡（失败终态） */
     DEAD: 5,
+    /** DEAD 的别名，语义"失败"，便于调用方读起来更直白。 */
+    FAILED: 5,
     /** 已取消 */
     CANCELLED: 6,
+    /** CANCELLED 的旧拼写别名，勿新增使用。 */
+    CANCELED: 6,
 } as const;
 export type TimerRunStatusValue = typeof TimerRunStatus[keyof typeof TimerRunStatus];
 
@@ -55,14 +68,31 @@ export const TimerScheduleType = {
 } as const;
 export type TimerScheduleTypeValue = typeof TimerScheduleType[keyof typeof TimerScheduleType];
 
-/** 推送渠道 */
+/**
+ * 推送渠道
+ * 对齐 proto TimerPushChannel（time_scheduler.proto）：
+ *   1 = 不推送 / 2 = 微信公众号 / 3 = 企业微信 AI 机器人 / 4 = 企业微信 webhook 机器人
+ */
 export const TimerPushChannel = {
     UNSPECIFIED: 0,
     NONE: 1,
     WECHAT: 2,
     WECOM_BOT: 3,
+    WECOM_WEBHOOK: 4,
 } as const;
 export type TimerPushChannelValue = typeof TimerPushChannel[keyof typeof TimerPushChannel];
+
+/**
+ * 推送目标类型
+ * 对齐 proto TimerPushTargetType：
+ *   1 = USER（微信公众号 openid）/ 2 = CHAT（企微机器人 chat_id）
+ */
+export const TimerPushTargetType = {
+    UNSPECIFIED: 0,
+    USER: 1,
+    CHAT: 2,
+} as const;
+export type TimerPushTargetTypeValue = typeof TimerPushTargetType[keyof typeof TimerPushTargetType];
 
 /** 创建来源 */
 export const TimerCreateSource = {
@@ -121,10 +151,26 @@ export interface TimerPushWecomBotConfig {
     WebhookUrl?: string;
 }
 
-/** 推送配置 */
+/**
+ * 推送配置
+ * 对齐 proto TimerPushConfig（time_scheduler.proto:468）：
+ *   push_channel + push_target_type + push_target_id + push_webhook_url
+ * 保留旧的 Channel / Wechat / WecomBot 字段以兼容存量数据回填。
+ */
 export interface TimerPushConfig {
-    Channel: TimerPushChannelValue;
+    /** 推送渠道枚举 */
+    PushChannel?: TimerPushChannelValue;
+    /** 推送目标类型：1=USER / 2=CHAT */
+    PushTargetType?: TimerPushTargetTypeValue;
+    /** openid（公众号）或 chat_id（企微机器人） */
+    PushTargetId?: string;
+    /** 企业微信 webhook 推送地址（TIMER_PUSH_CHANNEL_WECOM_WEBHOOK 使用） */
+    PushWebhookUrl?: string;
+    /** @deprecated 兼容旧字段：等价于 PushChannel */
+    Channel?: TimerPushChannelValue;
+    /** @deprecated 兼容旧字段 */
     Wechat?: TimerPushWechatConfig;
+    /** @deprecated 兼容旧字段 */
     WecomBot?: TimerPushWecomBotConfig;
 }
 
@@ -223,7 +269,11 @@ export interface TimerRunLog {
 export interface CronTaskI18n {
     /* 面板 */
     panelTitle?: string;
+    /** 面板标题旁问号 tooltip 内容（对齐 webim："设置定时任务，系统将按计划自动执行"） */
+    panelTip?: string;
     empty?: string;
+    /** 空态提示末尾（用于"点击 {createTask} {emptySuffix}"分段），如"开始" */
+    emptySuffix?: string;
     createTask?: string;
     createByNlp?: string;
     createManual?: string;
@@ -290,8 +340,16 @@ export interface CronTaskI18n {
     webhookUrlLabel?: string;
     webhookUrlPlaceholder?: string;
     modelLabel?: string;
+    /** 模型选择器占位文案 */
+    modelSelectPlaceholder?: string;
     conversationLabel?: string;
     conversationPlaceholder?: string;
+    /** 校验：选择推送渠道但未选择会话时的提示 */
+    conversationRequired?: string;
+    /** 会话列表加载中 */
+    conversationLoading?: string;
+    /** 会话列表为空 */
+    conversationEmpty?: string;
     save?: string;
     cancel?: string;
     confirm?: string;
@@ -319,14 +377,38 @@ export interface CronTaskI18n {
     /* 相对时间 */
     today?: string;
     daysAgo?: string;
+
+    /* 单次执行状态（TimerRunStatus 映射） */
+    /** PENDING（等待执行） */
+    runStatusPending?: string;
+    /** RUNNING（执行中） */
+    runStatusRunning?: string;
+    /** RETRY_WAIT（等待重试） */
+    runStatusRetryWait?: string;
+    /** SUCCESS（执行成功） */
+    runStatusSuccess?: string;
+    /** DEAD / FAILED（执行失败） */
+    runStatusFailed?: string;
+    /** CANCELLED（已取消） */
+    runStatusCancelled?: string;
+
+    /* 通用操作 */
+    /** 刷新按钮 tooltip */
+    refresh?: string;
+    /** 关闭按钮 tooltip */
+    close?: string;
+    /** 未命名任务兜底 */
+    unnamedTask?: string;
 }
 
 /** CronTask i18n 中文默认值 */
 export const defaultCronTaskI18n: Required<CronTaskI18n> = {
     panelTitle: '定时任务',
-    empty: '暂无定时任务，去创建一个吧',
-    createTask: '新建任务',
-    createByNlp: '智能创建',
+    panelTip: '设置定时任务，系统将按计划自动执行',
+    empty: '没有进行中的任务，点击',
+    emptySuffix: '开始',
+    createTask: '新建',
+    createByNlp: '智能生成',
     createManual: '手动创建',
     loadMore: '加载更多',
     loading: '加载中',
@@ -385,8 +467,12 @@ export const defaultCronTaskI18n: Required<CronTaskI18n> = {
     webhookUrlLabel: 'Webhook 地址',
     webhookUrlPlaceholder: '请输入企微机器人 Webhook URL',
     modelLabel: '模型',
-    conversationLabel: '关联文件夹',
-    conversationPlaceholder: '选择关联的文件夹',
+    modelSelectPlaceholder: '选择模型',
+    conversationLabel: '选择会话',
+    conversationPlaceholder: '请选择会话',
+    conversationRequired: '请选择推送会话',
+    conversationLoading: '加载中',
+    conversationEmpty: '暂无可选会话',
     save: '保存',
     cancel: '取消',
     confirm: '确认',
@@ -410,13 +496,26 @@ export const defaultCronTaskI18n: Required<CronTaskI18n> = {
     weekdayNames: ['日', '一', '二', '三', '四', '五', '六'],
     today: '今天',
     daysAgo: '天前',
+
+    runStatusPending: '等待执行',
+    runStatusRunning: '执行中',
+    runStatusRetryWait: '等待重试',
+    runStatusSuccess: '执行成功',
+    runStatusFailed: '执行失败',
+    runStatusCancelled: '已取消',
+
+    refresh: '刷新',
+    close: '关闭',
+    unnamedTask: '未命名任务',
 };
 
 /** CronTask i18n 英文默认值 */
 export const defaultCronTaskI18nEn: Required<CronTaskI18n> = {
     panelTitle: 'Scheduled Tasks',
-    empty: 'No scheduled tasks yet. Create one to get started.',
-    createTask: 'New Task',
+    panelTip: 'Set up scheduled tasks to run automatically on schedule.',
+    empty: 'No active tasks. Click',
+    emptySuffix: 'to start',
+    createTask: 'New',
     createByNlp: 'Create with AI',
     createManual: 'Manual',
     loadMore: 'Load more',
@@ -476,8 +575,12 @@ export const defaultCronTaskI18nEn: Required<CronTaskI18n> = {
     webhookUrlLabel: 'Webhook URL',
     webhookUrlPlaceholder: 'Enter WeCom bot webhook URL',
     modelLabel: 'Model',
-    conversationLabel: 'Folder',
-    conversationPlaceholder: 'Select associated folder',
+    modelSelectPlaceholder: 'Select model',
+    conversationLabel: 'Conversation',
+    conversationPlaceholder: 'Select conversation',
+    conversationRequired: 'Please select a conversation to push to',
+    conversationLoading: 'Loading',
+    conversationEmpty: 'No conversations available',
     save: 'Save',
     cancel: 'Cancel',
     confirm: 'Confirm',
@@ -501,6 +604,17 @@ export const defaultCronTaskI18nEn: Required<CronTaskI18n> = {
     weekdayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     today: 'Today',
     daysAgo: 'd ago',
+
+    runStatusPending: 'Pending',
+    runStatusRunning: 'Running',
+    runStatusRetryWait: 'Retry Waiting',
+    runStatusSuccess: 'Success',
+    runStatusFailed: 'Failed',
+    runStatusCancelled: 'Cancelled',
+
+    refresh: 'Refresh',
+    close: 'Close',
+    unnamedTask: 'Untitled task',
 };
 
 /** 按语言选取默认 i18n */

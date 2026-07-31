@@ -2,6 +2,7 @@ import axios from 'axios';
 import router from '@/router'
 import { logout } from '@/service/login';
 import { getBaseURL } from '@/utils/url';
+import { useUiStore } from '@/stores/ui';
 
 // 创建axios实例
 const instance = axios.create({
@@ -16,6 +17,13 @@ const instance = axios.create({
 // 请求拦截器
 instance.interceptors.request.use(
   (config) => {
+    // 注入 Language header（对齐 gpt-demo ajax.js 的 Language header 注入模式）
+    // 从 Pinia store 读取当前语言：'zh' → 'zh-CN', 'en' → 'en-US'
+    // 若业务方已显式传入 Language，则保留
+    if (!config.headers['Language']) {
+      const uiStore = useUiStore();
+      config.headers['Language'] = uiStore.language === 'en' ? 'en-US' : 'zh-CN';
+    }
     return config
   },
   (error) => {

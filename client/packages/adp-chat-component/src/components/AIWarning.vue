@@ -1,17 +1,30 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+import { defaultChatItemI18n, defaultChatItemI18nEn } from '../model/type';
+
 interface Props {
-    /** 警告文本 */
+    /** 警告文本；未传时按 language 使用 ChatItemI18n.aiDisclaimer 默认值 */
     text?: string;
+    /** 当前语言标识（如 'zh-CN'、'en-US'），用于选择内部默认文案 */
+    language?: string;
 }
 
-withDefaults(defineProps<Props>(), {
-    text: '内容由AI生成，仅供参考'
-})
+const props = withDefaults(defineProps<Props>(), {
+    text: '',
+    language: 'zh-CN',
+});
+
+/** 最终展示的免责提示文本：外部 text 优先，否则按 language 走 ChatItemI18n 默认值 */
+const displayText = computed(() => {
+    if (props.text) return props.text;
+    const defaults = props.language?.startsWith('en') ? defaultChatItemI18nEn : defaultChatItemI18n;
+    return defaults.aiDisclaimer;
+});
 </script>
 
 <template>
     <div class="chat-component ai-warning">
-        {{ text }}
+        {{ displayText }}
     </div>
 </template>
 

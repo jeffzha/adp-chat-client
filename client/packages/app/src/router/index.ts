@@ -22,6 +22,18 @@ const router = createRouter({
       component: () => import('@/pages/Home.vue'),
     },
     {
+      // 定时任务会话：/:applicationId/timertask/:conversationId?triggerId=xxx
+      // 定时任务（AppTrigger）触发的会话与渠道会话同源（不在本地 chat_conversation 表，走 CAPI）。
+      // 通过 URL 里的 /timertask/ 段显式区分：
+      //   1) 刷新时前端判定为定时任务会话，走 DescribeConversationMessageList 拉首屏
+      //   2) 右侧默认展开定时任务执行记录面板（sidebar 模式，对齐企微机器人体验）
+      //   3) query.triggerId 用于刷新后自动定位到具体触发器详情
+      // 必须放在通用 home 路由之前。
+      path: '/:applicationId/timertask/:conversationId',
+      name: 'home-timertask',
+      component: () => import('@/pages/Home.vue'),
+    },
+    {
       // 统一层级结构：/:applicationId?/:conversationId?
       // 例：/                       -> 未选应用
       //     /appA                   -> 选中应用 appA，无会话

@@ -116,6 +116,10 @@
         "service": "adp",
         "headers.X-TC-Version": "2026-05-20"
     },
+    "DescribeSkillSummaryList": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20"
+    },
     "DescribePlugin": {
         "service": "adp",
         "headers.X-TC-Version": "2026-05-20"
@@ -153,5 +157,60 @@
     "DescribeTimerTaskSummaryList": {
         "service": "adp",
         "headers.X-TC-Version": "2026-05-20"
+    },
+    "CreateAppTrigger": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "payload.AppId": "{{AppId}}"
+    },
+    "ModifyAppTrigger": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "payload.AppId": "{{AppId}}"
+    },
+    "DescribeAppTrigger": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "payload.AppId": "{{AppId}}"
+    },
+    "DescribeAppTriggerSummaryList": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "payload.AppId": "{{AppId}}"
+    },
+    "PauseAppTrigger": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "payload.AppId": "{{AppId}}"
+    },
+    "ResumeAppTrigger": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "payload.AppId": "{{AppId}}"
+    },
+    "DeleteAppTrigger": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "payload.AppId": "{{AppId}}"
+    },
+    "RunAppTriggerNow": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "payload.AppId": "{{AppId}}"
+    },
+    "DescribeAppTriggerRunLogList": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "payload.AppId": "{{AppId}}"
+    },
+    "MarkAppTriggerRunLogRead": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "payload.AppId": "{{AppId}}"
+    },
+    "DescribeAppTriggerInstance": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "payload.AppId": "{{AppId}}"
     }
 }

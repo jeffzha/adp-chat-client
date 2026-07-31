@@ -24,14 +24,23 @@ import type { ThemeProps } from '../../model/type';
 import { themePropsDefaults } from '../../model/type';
 import type { CronTaskI18n, TimerTask, TimerTaskSummary } from '../../model/cronTask';
 import { getCronTaskI18nByLanguage } from '../../model/cronTask';
-import { deleteTimerTask } from '../../service/cronTaskApi';
+import { AppTriggerScope } from '../../model/appTrigger';
+import { deleteAppTrigger } from '../../service/appTriggerApi';
 import { getTimerId } from '../../utils/cronTask';
+import { getTriggerId } from '../../utils/appTrigger';
 
 interface Props extends ThemeProps {
     visible: boolean;
     task?: TimerTask | TimerTaskSummary | Record<string, any> | null;
     applicationId: string;
     spaceId?: string;
+    /**
+     * 触发器作用域（proto AppTriggerScope）。
+     * USER(2) = C 端访客，默认，需配合 userId；APP(1) = B 端管理员。
+     */
+    scope?: number;
+    /** C 端访客 ID，scope=USER 时必填 */
+    userId?: string;
     language?: string;
     i18n?: Partial<CronTaskI18n>;
 }
@@ -41,6 +50,8 @@ const props = withDefaults(defineProps<Props>(), {
     visible: false,
     task: null,
     spaceId: '',
+    scope: AppTriggerScope.USER,
+    userId: '',
     language: 'zh-CN',
     i18n: () => ({}),
 });
@@ -66,17 +77,15 @@ const dialogVisible = computed({
 });
 
 async function onConfirm() {
-    const id = getTimerId(props.task);
+    // 兼容 AppTrigger:TriggerId + TimerTask:TimerId
+    const id = getTriggerId(props.task) || getTimerId(props.task);
     if (!id) {
         emit('update:visible', false);
         return;
     }
     loading.value = true;
     try {
-        await deleteTimerTask(
-            { SpaceId: props.spaceId, TimerId: id },
-            props.applicationId,
-        );
+        await deleteAppTrigger(id, props.applicationId, props.scope, undefined, props.userId);
         MessagePlugin.success(mergedI18n.value.deleteSuccess);
         emit('success', props.task);
         emit('update:visible', false);

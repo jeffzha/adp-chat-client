@@ -102,9 +102,10 @@ export async function listReferShareKnowledge(
 
     if (params.includeDefault !== false) {
         // 参考 gpt-demo：默认知识库 id 取当前 applicationId（等价于 app_biz_id）
+        // 名称由调用方按 i18n 传入；未传时留空，避免在此硬编码中文
         const defaultItem: ShareKnowledgeItem = {
             knowledgeBizId: params.applicationId,
-            knowledgeName: params.defaultName || '默认知识库',
+            knowledgeName: params.defaultName || '',
             knowledgeDescription: '',
             isDefault: true,
         };

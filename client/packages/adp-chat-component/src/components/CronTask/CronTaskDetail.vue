@@ -11,8 +11,8 @@
                     :theme="theme"
                 />
             </span>
-            <span class="cron-task-detail__title">
-                {{ taskName || i18n.detail }}
+            <span class="cron-task-detail__title" :title="taskDisplayName">
+                {{ taskDisplayName }}
             </span>
         </div>
 
@@ -45,7 +45,7 @@
                         <t-button
                             v-if="taskStatus === TimerTaskStatus.ACTIVE"
                             size="small"
-                            variant="text"
+                            variant="outline"
                             :disabled="actionLoading"
                             @click="handlePause"
                         >
@@ -57,7 +57,7 @@
                         <t-button
                             v-else-if="taskStatus === TimerTaskStatus.PAUSED"
                             size="small"
-                            variant="text"
+                            variant="outline"
                             :disabled="actionLoading"
                             @click="handleResume"
                         >
@@ -66,7 +66,7 @@
                             </template>
                             {{ i18n.resume }}
                         </t-button>
-                        <t-button size="small" variant="text" :disabled="actionLoading" @click="handleEdit">
+                        <t-button size="small" variant="outline" :disabled="actionLoading" @click="handleEdit">
                             <template #icon>
                                 <CustomizedIcon remote name="basic_edit_line" size="xxs" :theme="theme" />
                             </template>
@@ -74,8 +74,7 @@
                         </t-button>
                         <t-button
                             size="small"
-                            variant="text"
-                            theme="danger"
+                            variant="outline"
                             :disabled="actionLoading"
                             @click="handleDelete"
                         >
@@ -86,7 +85,7 @@
                         </t-button>
                         <t-button
                             size="small"
-                            theme="primary"
+                            variant="outline"
                             :loading="actionLoading"
                             @click="handleRunNow"
                         >
@@ -100,11 +99,22 @@
 
                 <!-- 运行日志 -->
                 <div class="cron-task-detail__section cron-task-detail__section--logs">
-                    <div class="cron-task-detail__section-title">{{ i18n.runLog }}</div>
+                    <div class="cron-task-detail__section-header">
+                        <div class="cron-task-detail__section-title">{{ i18n.runLog }}</div>
+                        <t-button
+                            v-if="hasUnread"
+                            size="small"
+                            variant="text"
+                            :loading="markingAllRead"
+                            @click="handleMarkAllRead"
+                        >
+                            {{ i18n.markAllRead }}
+                        </t-button>
+                    </div>
                     <div ref="logListRef" class="cron-task-detail__log-list" @scroll="handleLogScroll">
                         <div
                             v-for="log in executionLogs"
-                            :key="log.LogId || `${log.TimerId}-${log.TriggerTime}`"
+                            :key="log.LogId || log.InstanceId || `${log.TriggerId || log.TimerId}-${log.TriggerTime || log.ScheduledFireTime || ''}`"
                             class="cron-task-detail__log-item"
                             @click="handleLogClick(log)"
                         >
@@ -130,7 +140,7 @@
                             v-else-if="!hasMoreLogs && executionLogs.length"
                             class="cron-task-detail__log-tip"
                         >
-                            {{ i18n.noRunLog }}
+                            {{ i18n.noMore }}
                         </div>
                         <div v-if="!executionLogs.length && !logsLoading" class="cron-task-detail__log-empty">
                             {{ i18n.noRunLog }}
@@ -150,10 +160,10 @@
             :editing-task="editingTask"
             :application-id="applicationId"
             :space-id="spaceId"
+            :scope="scope"
+            :user-id="userId"
             :language="language"
             :i18n="props.i18n"
-            :model-options="modelOptions"
-            :folder-options="folderOptions"
             @success="handleEditSuccess"
             @close="editDialogVisible = false"
         />
@@ -164,11 +174,14 @@
             :task="currentTask"
             :application-id="applicationId"
             :space-id="spaceId"
+            :scope="scope"
+            :user-id="userId"
             :language="language"
             :i18n="props.i18n"
             :theme="theme"
             @success="handleDeleteSuccess"
         />
+
     </div>
 </template>
 
@@ -184,46 +197,56 @@ import type {
     CronTaskI18n,
     TimerTask,
     TimerTaskSummary,
-    TimerRunLog,
 } from '../../model/cronTask';
 import {
     TimerTaskStatus,
     TimerRunStatus,
     getCronTaskI18nByLanguage,
 } from '../../model/cronTask';
+import { AppTriggerStatus, AppTriggerScope } from '../../model/appTrigger';
 import {
-    describeTimerTask,
-    describeTimerTaskRunLogList,
-    pauseTimerTask,
-    resumeTimerTask,
-    runTimerTaskNow,
-} from '../../service/cronTaskApi';
+    describeAppTrigger,
+    describeAppTriggerRunLogList,
+    pauseAppTrigger,
+    resumeAppTrigger,
+    runAppTriggerNow,
+    markAppTriggerRunLogRead,
+} from '../../service/appTriggerApi';
 import {
     getTimerId,
-    getTaskName,
     getPromptContent,
     getPolicySummary,
     getTaskStatus,
+    getTaskName,
     formatRelativeTime,
 } from '../../utils/cronTask';
-
-interface Option { label: string; value: string }
+import {
+    getTriggerId,
+    getTriggerName,
+    getTriggerPolicySummary,
+    getTriggerStatus,
+    getTriggerPrompt,
+    isAppTrigger,
+} from '../../utils/appTrigger';
 
 interface Props extends ThemeProps {
     /** 任务（可以只是 Summary） */
     task: TimerTaskSummary | TimerTask | null;
     /** 应用 ID */
     applicationId: string;
-    /** 空间 ID */
+    /** @deprecated AppTrigger 不再依赖 spaceId，保留以兼容旧调用方 */
     spaceId?: string;
+    /**
+     * 触发器作用域（proto AppTriggerScope）。
+     * USER(2) = C 端访客，默认，需配合 userId；APP(1) = B 端管理员。
+     */
+    scope?: number;
+    /** C 端访客 ID，scope=USER 时必填 */
+    userId?: string;
     /** 语言 */
     language?: string;
     /** i18n 覆盖 */
     i18n?: Partial<CronTaskI18n>;
-    /** 模型选项（编辑对话框用） */
-    modelOptions?: Option[];
-    /** 文件夹选项（编辑对话框用） */
-    folderOptions?: Option[];
     /** 轮询间隔（ms），默认 10s */
     pollInterval?: number;
 }
@@ -232,16 +255,16 @@ const props = withDefaults(defineProps<Props>(), {
     ...themePropsDefaults,
     task: null,
     spaceId: '',
+    scope: AppTriggerScope.USER,
+    userId: '',
     language: 'zh-CN',
     i18n: () => ({}),
-    modelOptions: () => [],
-    folderOptions: () => [],
     pollInterval: 10 * 1000,
 });
 
 const emit = defineEmits<{
     (e: 'back'): void;
-    (e: 'switch-to-chat', payload: { task: any; sessionId?: string; logId?: string }): void;
+    (e: 'switch-to-chat', payload: { task: any; triggerId?: string; sessionId?: string; logId?: string; userId?: string }): void;
     (e: 'action-done', action: 'pause' | 'resume' | 'edit' | 'delete' | 'run', task: any): void;
 }>();
 
@@ -253,8 +276,8 @@ const i18n = computed<Required<CronTaskI18n>>(() => ({
 // ============================================================
 // 状态
 // ============================================================
-const taskDetail = ref<TimerTask | null>(null);
-const runLogs = ref<TimerRunLog[]>([]);
+const taskDetail = ref<any>(null);
+const runLogs = ref<any[]>([]);
 const logsLoading = ref(false);
 const logsLoadingMore = ref(false);
 const hasMoreLogs = ref(true);
@@ -266,61 +289,98 @@ const editDialogVisible = ref(false);
 const editingTask = ref<TimerTaskSummary | TimerTask | null>(null);
 const deleteDialogVisible = ref(false);
 const actionLoading = ref(false);
+const markingAllRead = ref(false);
 
 const logListRef = ref<HTMLDivElement | null>(null);
 
+/** 获取实体的唯一标识（兼容 AppTrigger:TriggerId + TimerTask:TimerId） */
+function getEntityId(item: any): string {
+    return getTriggerId(item) || getTimerId(item);
+}
+
 // 统一数据源
 const currentTask = computed(() => taskDetail.value || props.task);
-const taskStatus = computed(() => (currentTask.value ? getTaskStatus(currentTask.value) : 0));
+const _isAppTrigger = computed(() => isAppTrigger(currentTask.value));
+const taskStatus = computed(() => {
+    if (!currentTask.value) return 0;
+    return _isAppTrigger.value
+        ? getTriggerStatus(currentTask.value)
+        : getTaskStatus(currentTask.value);
+});
 const statusClass = computed(() => {
-    if (!currentTask.value) return '';
-    return (
-        {
-            [TimerTaskStatus.ACTIVE]: 'active',
-            [TimerTaskStatus.PAUSED]: 'paused',
-            [TimerTaskStatus.COMPLETED]: 'stopped',
-        } as Record<number, string>
-    )[taskStatus.value] || 'stopped';
+    const s = taskStatus.value;
+    if (s === TimerTaskStatus.ACTIVE || s === AppTriggerStatus.ENABLED) return 'active';
+    if (s === TimerTaskStatus.PAUSED || s === AppTriggerStatus.PAUSED) return 'paused';
+    return 'stopped';
 });
 const statusText = computed(() => {
-    if (!currentTask.value) return '';
-    return (
-        {
-            [TimerTaskStatus.ACTIVE]: i18n.value.running,
-            [TimerTaskStatus.PAUSED]: i18n.value.paused,
-            [TimerTaskStatus.COMPLETED]: i18n.value.completed,
-        } as Record<number, string>
-    )[taskStatus.value] || '';
+    const s = taskStatus.value;
+    if (s === TimerTaskStatus.ACTIVE || s === AppTriggerStatus.ENABLED) return i18n.value.running;
+    if (s === TimerTaskStatus.PAUSED || s === AppTriggerStatus.PAUSED) return i18n.value.paused;
+    if (s === TimerTaskStatus.COMPLETED || s === AppTriggerStatus.DELETED) return i18n.value.completed;
+    return '';
 });
-const taskName = computed(() => (currentTask.value ? getTaskName(currentTask.value) : ''));
-const taskPrompt = computed(() => (currentTask.value ? getPromptContent(currentTask.value) : ''));
-const scheduleDescription = computed(() =>
-    currentTask.value ? getPolicySummary(currentTask.value) || '—' : '',
-);
+const taskPrompt = computed(() => {
+    if (!currentTask.value) return '';
+    return _isAppTrigger.value
+        ? getTriggerPrompt(currentTask.value)
+        : getPromptContent(currentTask.value);
+});
+const scheduleDescription = computed(() => {
+    if (!currentTask.value) return '';
+    return _isAppTrigger.value
+        ? getTriggerPolicySummary(currentTask.value) || '—'
+        : getPolicySummary(currentTask.value) || '—';
+});
+
+/**
+ * 详情页头部标题：显示当前任务/触发器名称。
+ * 兼容 AppTrigger（TriggerName）与旧 TimerTask（Profile.TaskName）两种数据源；
+ * 若名称为空，回退到 i18n.panelTitle（"定时任务"）而不是执行记录标题，
+ * 避免与右侧执行记录 sidebar 的"定时任务执行记录"文案混淆。
+ */
+const taskDisplayName = computed(() => {
+    const task = currentTask.value;
+    if (!task) return i18n.value.panelTitle;
+    const name = _isAppTrigger.value ? getTriggerName(task) : getTaskName(task);
+    return name || i18n.value.panelTitle;
+});
 
 // ============================================================
-// 日志渲染
+// 日志渲染（兼容 TimerRunLog + AppTriggerRunLog）
 // ============================================================
 function getLogStatusValue(log: any): number {
-    return Number(log.run_status ?? log.RunStatus ?? log.status ?? 0);
+    return Number(log.status ?? log.Status ?? log.run_status ?? log.RunStatus ?? 0);
 }
 
 function getLogTriggerTime(log: any): string | number | undefined {
-    return log.trigger_time ?? log.TriggerTime ?? log.start_time ?? log.StartTime ?? log.scheduled_fire_time;
+    return log.scheduled_fire_time ?? log.ScheduledFireTime ??
+        log.start_time ?? log.StartTime ??
+        log.trigger_time ?? log.TriggerTime;
 }
 
-function getLogSessionId(log: any): string {
-    return log.session_id ?? log.SessionId ?? '';
+function getLogConversationId(log: any): string {
+    return log.conversation_id ?? log.ConversationId ??
+        log.session_id ?? log.SessionId ?? '';
+}
+
+function getLogInstanceId(log: any): string {
+    return log.instance_id ?? log.InstanceId ??
+        log.fire_instance_id ?? log.FireInstanceId ??
+        log.log_id ?? log.LogId ?? '';
 }
 
 function getLogContent(log: any): string {
     return (
-        log.result_message ?? log.ResultMessage ?? log.result_summary ?? log.error_message ?? log.ErrorMessage ?? ''
+        log.result_summary ?? log.ResultSummary ??
+        log.result_message ?? log.ResultMessage ??
+        log.error_message ?? log.ErrorMessage ?? ''
     );
 }
 
 function getLogUnread(log: any): boolean {
-    // is_read=false 表示未读；若字段缺失则默认 false（不显示红点）
+    if (log.unread !== undefined) return Boolean(log.unread);
+    if (log.Unread !== undefined) return Boolean(log.Unread);
     const read = log.is_read ?? log.IsRead;
     return read === false;
 }
@@ -330,7 +390,12 @@ const executionLogs = computed(() =>
         const status = getLogStatusValue(log);
         return {
             ...log,
-            _timeLabel: formatRelativeTime(getLogTriggerTime(log)),
+            LogId: getLogInstanceId(log),
+            ConversationId: getLogConversationId(log),
+            _timeLabel: formatRelativeTime(getLogTriggerTime(log), {
+                today: i18n.value.today,
+                daysAgo: i18n.value.daysAgo,
+            }),
             _statusClass: getLogStatusClass(status),
             _statusText: getLogStatusText(status),
             _content: getLogContent(log),
@@ -339,7 +404,11 @@ const executionLogs = computed(() =>
     }),
 );
 
+const hasUnread = computed(() => executionLogs.value.some((l: any) => !l.IsRead));
+
 function getLogStatusClass(status: number): string {
+    // 严格对齐 proto TimerRunStatus：0 UNSPECIFIED / 1 PENDING / 2 RUNNING /
+    // 3 RETRY_WAIT / 4 SUCCESS / 5 DEAD(失败) / 6 CANCELLED
     const map: Record<number, string> = {
         [TimerRunStatus.PENDING]: 'pending',
         [TimerRunStatus.RUNNING]: 'running',
@@ -352,13 +421,14 @@ function getLogStatusClass(status: number): string {
 }
 
 function getLogStatusText(status: number): string {
+    const t = i18n.value;
     const map: Record<number, string> = {
-        [TimerRunStatus.PENDING]: props.language?.startsWith('en') ? 'Pending' : '等待执行',
-        [TimerRunStatus.RUNNING]: props.language?.startsWith('en') ? 'Running' : '正在执行',
-        [TimerRunStatus.RETRY_WAIT]: props.language?.startsWith('en') ? 'Retrying' : '等待重试',
-        [TimerRunStatus.SUCCESS]: props.language?.startsWith('en') ? 'Success' : '执行成功',
-        [TimerRunStatus.DEAD]: props.language?.startsWith('en') ? 'Failed' : '执行失败',
-        [TimerRunStatus.CANCELLED]: props.language?.startsWith('en') ? 'Canceled' : '已取消',
+        [TimerRunStatus.PENDING]: t.runStatusPending,
+        [TimerRunStatus.RUNNING]: t.runStatusRunning,
+        [TimerRunStatus.RETRY_WAIT]: t.runStatusRetryWait,
+        [TimerRunStatus.SUCCESS]: t.runStatusSuccess,
+        [TimerRunStatus.DEAD]: t.runStatusFailed,
+        [TimerRunStatus.CANCELLED]: t.runStatusCancelled,
     };
     return map[status] || '';
 }
@@ -366,12 +436,10 @@ function getLogStatusText(status: number): string {
 // ============================================================
 // 数据加载
 // ============================================================
-async function fetchTaskDetail(timerId: string) {
+async function fetchTaskDetail(id: string) {
     try {
-        const detail: any = await describeTimerTask(
-            { SpaceId: props.spaceId, TimerId: timerId },
-            props.applicationId,
-        );
+        // 优先调 AppTrigger 接口
+        const detail = await describeAppTrigger(id, props.applicationId, props.scope, undefined, props.userId);
         taskDetail.value = detail || null;
     } catch (e) {
         console.error('[CronTaskDetail] fetchTaskDetail failed:', e);
@@ -379,21 +447,22 @@ async function fetchTaskDetail(timerId: string) {
     }
 }
 
-async function fetchRunLogs(timerId: string) {
+async function fetchRunLogs(id: string) {
     logsLoading.value = true;
     currentPage.value = 1;
     hasMoreLogs.value = true;
     try {
-        const res: any = await describeTimerTaskRunLogList(
+        const res: any = await describeAppTriggerRunLogList(
             {
-                SpaceId: props.spaceId,
-                TimerId: timerId,
+                TriggerId: id,
                 PageNumber: 1,
                 PageSize: pageSize.value,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
-        const list: TimerRunLog[] = res?.run_log_list || res?.LogList || [];
+        const list = res?.run_log_list || res?.RunLogList || [];
         runLogs.value = list;
         if (list.length < pageSize.value) hasMoreLogs.value = false;
         _startPolling();
@@ -406,21 +475,22 @@ async function fetchRunLogs(timerId: string) {
 }
 
 async function loadMoreLogs() {
-    const timerId = currentTask.value ? getTimerId(currentTask.value) : '';
-    if (!timerId || logsLoadingMore.value || !hasMoreLogs.value) return;
+    const id = currentTask.value ? getEntityId(currentTask.value) : '';
+    if (!id || logsLoadingMore.value || !hasMoreLogs.value) return;
     logsLoadingMore.value = true;
     const nextPage = currentPage.value + 1;
     try {
-        const res: any = await describeTimerTaskRunLogList(
+        const res: any = await describeAppTriggerRunLogList(
             {
-                SpaceId: props.spaceId,
-                TimerId: timerId,
+                TriggerId: id,
                 PageNumber: nextPage,
                 PageSize: pageSize.value,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
-        const list: TimerRunLog[] = res?.run_log_list || res?.LogList || [];
+        const list = res?.run_log_list || res?.RunLogList || [];
         if (list.length < pageSize.value) hasMoreLogs.value = false;
         runLogs.value = [...runLogs.value, ...list];
         currentPage.value = nextPage;
@@ -454,20 +524,21 @@ function _stopPolling() {
 }
 
 async function _pollRefreshLogs() {
-    const timerId = currentTask.value ? getTimerId(currentTask.value) : '';
-    if (!timerId) return;
+    const id = currentTask.value ? getEntityId(currentTask.value) : '';
+    if (!id) return;
     const totalSize = currentPage.value * pageSize.value;
     try {
-        const res: any = await describeTimerTaskRunLogList(
+        const res: any = await describeAppTriggerRunLogList(
             {
-                SpaceId: props.spaceId,
-                TimerId: timerId,
+                TriggerId: id,
                 PageNumber: 1,
                 PageSize: totalSize,
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
             },
             props.applicationId,
         );
-        const list: TimerRunLog[] = res?.run_log_list || res?.LogList || [];
+        const list = res?.run_log_list || res?.RunLogList || [];
         runLogs.value = list;
         if (list.length < totalSize) hasMoreLogs.value = false;
     } catch (e) {
@@ -484,24 +555,93 @@ function handleBack() {
 }
 
 function handleLogClick(log: any) {
-    const sessionId = getLogSessionId(log);
-    if (sessionId) {
+    const conversationId = getLogConversationId(log);
+    const instanceId = getLogInstanceId(log);
+    // 点击日志时自动标记单条为已读
+    const isLogUnread = getLogUnread(log);
+    if (instanceId && isLogUnread) {
+        markSingleLogRead(instanceId);
+    }
+    // 直接切到对应会话进行对话（webim 风格，携带 userId 供 DescribeConversationMessageList 拉取历史）
+    if (conversationId) {
+        const userId = log.user_id ?? log.UserId ?? '';
+        const triggerId = currentTask.value ? getEntityId(currentTask.value) : '';
         emit('switch-to-chat', {
             task: currentTask.value,
-            sessionId,
-            logId: log.fire_instance_id ?? log.LogId,
+            triggerId,
+            sessionId: conversationId,
+            logId: instanceId,
+            userId,
         });
     }
 }
 
+/**
+ * 标记单条日志为已读（静默，不弹 toast）
+ */
+async function markSingleLogRead(instanceId: string) {
+    const triggerId = currentTask.value ? getEntityId(currentTask.value) : '';
+    if (!triggerId) return;
+    try {
+        await markAppTriggerRunLogRead(
+            {
+                TriggerId: triggerId,
+                InstanceIdList: [instanceId],
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
+            },
+            props.applicationId,
+        );
+        // 本地更新该条日志的已读状态
+        const log = runLogs.value.find((l: any) => getLogInstanceId(l) === instanceId);
+        if (log) {
+            log.unread = false;
+            log.Unread = false;
+        }
+    } catch (e) {
+        console.error('[CronTaskDetail] markSingleLogRead failed:', e);
+    }
+}
+
+/**
+ * 一键全部已读
+ */
+async function handleMarkAllRead() {
+    const triggerId = currentTask.value ? getEntityId(currentTask.value) : '';
+    if (!triggerId || markingAllRead.value) return;
+    markingAllRead.value = true;
+    try {
+        // InstanceIdList 为空数组表示标记全部已读
+        const count = await markAppTriggerRunLogRead(
+            {
+                TriggerId: triggerId,
+                InstanceIdList: [],
+                Scope: props.scope,
+                ...(props.userId ? { UserId: props.userId } : {}),
+            },
+            props.applicationId,
+        );
+        MessagePlugin.success(`${i18n.value.markAllRead}（${count}）`);
+        // 本地批量更新所有日志为已读
+        runLogs.value.forEach((l: any) => {
+            l.unread = false;
+            l.Unread = false;
+        });
+    } catch (e) {
+        console.error('[CronTaskDetail] handleMarkAllRead failed:', e);
+    } finally {
+        markingAllRead.value = false;
+    }
+}
+
 async function handlePause() {
-    const timerId = currentTask.value ? getTimerId(currentTask.value) : '';
-    if (!timerId) return;
+    const id = currentTask.value ? getEntityId(currentTask.value) : '';
+    if (!id) return;
     actionLoading.value = true;
     try {
-        await pauseTimerTask({ SpaceId: props.spaceId, TimerId: timerId }, props.applicationId);
+        await pauseAppTrigger(id, props.applicationId, props.scope, undefined, props.userId);
         MessagePlugin.success(i18n.value.pauseSuccess);
-        await fetchTaskDetail(timerId);
+        await fetchTaskDetail(id);
         emit('action-done', 'pause', currentTask.value);
     } catch (e) {
         console.error('[CronTaskDetail] pause failed:', e);
@@ -512,13 +652,14 @@ async function handlePause() {
 }
 
 async function handleResume() {
-    const timerId = currentTask.value ? getTimerId(currentTask.value) : '';
-    if (!timerId) return;
+    const id = currentTask.value ? getEntityId(currentTask.value) : '';
+    if (!id) return;
     actionLoading.value = true;
     try {
-        await resumeTimerTask({ SpaceId: props.spaceId, TimerId: timerId }, props.applicationId);
+        // ⚠️ ResumeAppTriggerRsp 无 next_fire_time，需额外刷新详情
+        await resumeAppTrigger(id, props.applicationId, props.scope, undefined, props.userId);
         MessagePlugin.success(i18n.value.resumeSuccess);
-        await fetchTaskDetail(timerId);
+        await fetchTaskDetail(id);
         emit('action-done', 'resume', currentTask.value);
     } catch (e) {
         console.error('[CronTaskDetail] resume failed:', e);
@@ -536,8 +677,8 @@ function handleEdit() {
 function handleEditSuccess() {
     editDialogVisible.value = false;
     editingTask.value = null;
-    const timerId = currentTask.value ? getTimerId(currentTask.value) : '';
-    if (timerId) fetchTaskDetail(timerId);
+    const id = currentTask.value ? getEntityId(currentTask.value) : '';
+    if (id) fetchTaskDetail(id);
     emit('action-done', 'edit', currentTask.value);
 }
 
@@ -552,11 +693,11 @@ function handleDeleteSuccess() {
 }
 
 async function handleRunNow() {
-    const timerId = currentTask.value ? getTimerId(currentTask.value) : '';
-    if (!timerId) return;
+    const id = currentTask.value ? getEntityId(currentTask.value) : '';
+    if (!id) return;
     actionLoading.value = true;
     try {
-        await runTimerTaskNow({ SpaceId: props.spaceId, TimerId: timerId }, props.applicationId);
+        await runAppTriggerNow(id, props.applicationId, props.scope, undefined, props.userId);
         MessagePlugin.success(i18n.value.runNowSuccess);
         await _pollRefreshLogs();
         _startPolling();
@@ -576,7 +717,7 @@ watch(
     () => props.task,
     (val) => {
         if (val) {
-            const id = getTimerId(val);
+            const id = getEntityId(val);
             if (id) {
                 fetchTaskDetail(id);
                 fetchRunLogs(id);
@@ -598,14 +739,14 @@ onBeforeUnmount(() => {
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: var(--td-bg-color-container, #fff);
+    background: var(--td-bg-color-container);
 }
 
 .cron-task-detail__header {
     display: flex;
     align-items: center;
     padding: var(--td-size-6) var(--td-size-7);
-    border-bottom: 1px solid var(--td-component-border, rgba(18, 42, 79, 0.08));
+    border-bottom: 1px solid var(--td-component-border);
     flex-shrink: 0;
 }
 
@@ -622,7 +763,7 @@ onBeforeUnmount(() => {
 }
 
 .cron-task-detail__back:hover {
-    background: var(--td-bg-color-container-hover, rgba(36, 56, 97, 0.05));
+    background: var(--td-bg-color-container-hover);
 }
 
 .cron-task-detail__title {
@@ -651,17 +792,20 @@ onBeforeUnmount(() => {
 }
 
 .cron-task-detail__section-title {
-    font-size: 15px;
+    font-size: var(--td-font-size-title-small);
     font-weight: 600;
     color: var(--td-text-color-primary);
     margin-bottom: var(--td-size-5);
 }
 
+/* 提示词内容容器
+   对齐 webim：使用比 hover 更浅的中性底色（webim 为 rgba(36,56,97,.03)），
+   而非 container-hover 的 #f5f5f7 —— 后者在浅色主题下偏深，用户反馈"背景色太深"。 */
 .cron-task-detail__section-content {
     font-size: var(--td-font-size-body-medium);
     color: var(--td-text-color-secondary);
-    line-height: 1.8;
-    background: var(--td-bg-color-container-hover, rgba(36, 56, 97, 0.03));
+    line-height: var(--td-line-height-body-large);
+    background: var(--td-bg-color-page);
     border-radius: var(--td-radius-medium);
     padding: var(--td-size-5) var(--td-size-6);
     max-height: 156px;
@@ -679,7 +823,7 @@ onBeforeUnmount(() => {
     align-items: center;
     justify-content: space-between;
     margin-bottom: var(--td-size-8);
-    font-size: 13px;
+    font-size: var(--td-font-size-body-small);
     flex-wrap: wrap;
     gap: var(--td-size-5);
 }
@@ -708,20 +852,20 @@ onBeforeUnmount(() => {
     height: 8px;
     border-radius: var(--td-radius-circle);
     margin-right: var(--td-size-2);
-    background: rgba(1, 11, 50, 0.25);
+    background: var(--td-text-color-disabled);
     flex-shrink: 0;
 }
 
 .cron-task-detail__status--active .cron-task-detail__status-dot {
-    background: var(--td-success-color, #0fb87f);
+    background: var(--td-success-color);
 }
 
 .cron-task-detail__status--paused .cron-task-detail__status-dot {
-    background: var(--td-warning-color, #ff8345);
+    background: var(--td-warning-color);
 }
 
 .cron-task-detail__status--stopped .cron-task-detail__status-dot {
-    background: rgba(1, 11, 50, 0.25);
+    background: var(--td-text-color-disabled);
 }
 
 .cron-task-detail__schedule-text {
@@ -736,6 +880,17 @@ onBeforeUnmount(() => {
     margin-bottom: 0;
 }
 
+.cron-task-detail__section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--td-size-5);
+}
+
+.cron-task-detail__section-header .cron-task-detail__section-title {
+    margin-bottom: 0;
+}
+
 .cron-task-detail__log-list {
     position: relative;
     border-radius: var(--td-radius-default);
@@ -747,7 +902,7 @@ onBeforeUnmount(() => {
 .cron-task-detail__log-item {
     position: relative;
     padding: var(--td-size-6) var(--td-size-4);
-    border-bottom: 1px solid var(--td-component-border, rgba(18, 42, 79, 0.08));
+    border-bottom: 1px solid var(--td-component-border);
     cursor: pointer;
     transition: background-color 0.2s ease;
 }
@@ -757,7 +912,7 @@ onBeforeUnmount(() => {
 }
 
 .cron-task-detail__log-item:hover {
-    background: var(--td-bg-color-container-hover, rgba(36, 56, 97, 0.05));
+    background: var(--td-bg-color-container-hover);
 }
 
 .cron-task-detail__log-header {
@@ -779,19 +934,19 @@ onBeforeUnmount(() => {
 }
 
 .cron-task-detail__log-status--success {
-    color: var(--td-success-color, #0fb87f);
+    color: var(--td-success-color);
 }
 
 .cron-task-detail__log-status--failed {
-    color: var(--td-error-color, #e54545);
+    color: var(--td-error-color);
 }
 
 .cron-task-detail__log-status--running {
-    color: var(--td-brand-color, #0052d9);
+    color: var(--td-brand-color);
 }
 
 .cron-task-detail__log-content {
-    font-size: 13px;
+    font-size: var(--td-font-size-body-small);
     color: var(--td-text-color-placeholder);
     line-height: var(--td-line-height-body-small);
     word-break: break-word;
@@ -804,7 +959,7 @@ onBeforeUnmount(() => {
     width: 8px;
     height: 8px;
     border-radius: var(--td-radius-circle);
-    background: var(--td-error-color, #f75559);
+    background: var(--td-error-color);
     margin-left: auto;
     flex-shrink: 0;
 }

@@ -154,6 +154,10 @@ function isSameDay(a: Date, b: Date): boolean {
  * - 今天：HH:mm
  * - 1~6 天内：{n}{daysAgo}
  * - 7 天以上：M/D
+ *
+ * i18n 说明：
+ *   `daysAgo` 由调用方传入（对应 defaultCronTaskI18n.daysAgo，中文 "天前"，英文 " d ago"）。
+ *   若未传入，则不追加后缀，避免函数内部硬编码任何语言文案。
  */
 export function formatRelativeTime(
     input: number | string | undefined | null,
@@ -171,7 +175,7 @@ export function formatRelativeTime(
     const tgtMid = new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime();
     const diffDays = Math.floor((nowMid - tgtMid) / (24 * 60 * 60 * 1000));
     if (diffDays >= 1 && diffDays <= 6) {
-        const suffix = i18n?.daysAgo || '天前';
+        const suffix = i18n?.daysAgo ?? '';
         return `${diffDays}${suffix}`;
     }
     return `${target.getMonth() + 1}/${target.getDate()}`;

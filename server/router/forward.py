@@ -87,6 +87,8 @@ class ForwardApi(HTTPMethodView):
         variables = {
             'APP_KEY': vendor_app.config.get('AppKey', ''),
             'ACCOUNT_ID': request.ctx.account_id,
+            'ApplicationId': application_id,
+            'AppId': vendor_app.config.get('AppId', ''),
         }
 
         logging.info(f'[ForwardApi] Action={action}, ApplicationId={application_id}')
@@ -122,6 +124,9 @@ class ForwardApi(HTTPMethodView):
 
         logging.info(f'[ForwardApi] No defined method for {method_name}, using forward_request')
 
+        # 从请求 header 中提取 Language，透传给腾讯云 API（X-TC-Language header）
+        language = request.headers.get('Language') or None
+
         try:
             response = await vendor_app.forward_request(
                 action,
@@ -130,6 +135,7 @@ class ForwardApi(HTTPMethodView):
                 version=version,
                 raise_on_error=False,
                 variables=variables,
+                language=language,
             )
         except NotImplementedError as error:
             raise SanicException(

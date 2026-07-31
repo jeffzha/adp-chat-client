@@ -18,7 +18,7 @@ import { httpService } from '../../service/httpService';
 
 // TDrawer, TAvatar, TTooltip 已导入，模板中使用相应组件
 import type { LanguageOption, SideI18n, CommonLayoutProps, ChatMode } from '../../model/type';
-import { defaultLanguageOptions, defaultSideI18n, commonLayoutPropsDefaults } from '../../model/type';
+import { defaultLanguageOptions, defaultSideI18n, defaultSideI18nEn, commonLayoutPropsDefaults } from '../../model/type';
 
 export interface Props extends CommonLayoutProps {
     /** 是否显示侧边栏，默认值：isSidePanelOverlay 为 true 时为 false，否则为 true */
@@ -117,6 +117,8 @@ export interface Props extends CommonLayoutProps {
      * 语义与 Index.vue 内的 `chatMode` 计算属性一致，避免子组件再自己按 Pattern 推导。
      */
     chatMode?: ChatMode;
+    /** 当前语言标识（如 'zh-CN'、'en-US'），用于选择内部默认 i18n（中/英） */
+    language?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -157,11 +159,12 @@ const props = withDefaults(defineProps<Props>(), {
     channelSettingUserId: '',
     channelSettingAgentId: '',
     chatMode: 'standard',
+    language: 'zh-CN',
 });
 
-// 合并默认值和传入值
+// 合并默认值和传入值（内部默认按 language 选中/英）
 const i18n = computed(() => ({
-    ...defaultSideI18n,
+    ...(props.language?.startsWith('en') ? defaultSideI18nEn : defaultSideI18n),
     ...props.i18n
 }));
 
@@ -200,6 +203,8 @@ const emit = defineEmits<{
     (e: 'sideAction', key: string, item: SideActionItem): void;
     /** 选中定时任务列表项 */
     (e: 'selectCronTask', item: SideGroupItem): void;
+    /** 定时任务列表项「更多操作」菜单选择（如查看详情） */
+    (e: 'cronTaskMenuSelect', payload: { value: string; item: SideGroupItem }): void;
     /** 选中远程终端列表项 */
     (e: 'selectRemoteTerminal', item: RemoteTerminalItem): void;
     /** 点击"远程终端"分组标题右侧的设置入口（如渠道设置） */
@@ -409,6 +414,16 @@ const handleSelectCronTask = (item: SideGroupItem) => {
     emit('selectCronTask', item);
 };
 
+/** 定时任务列表项「更多操作」菜单选项（当前仅"查看详情"，对齐 smart-webim cronTaskMenuOptions） */
+const cronTaskMenuOptions = computed(() => [
+    { label: i18n.value.viewCronTaskDetail, value: 'detail' },
+]);
+
+/** 定时任务列表项「更多操作」菜单选择：透传给父层 */
+const handleCronTaskMenuSelect = (payload: { value: string; item: SideGroupItem }) => {
+    emit('cronTaskMenuSelect', payload);
+};
+
 /** 选中一个远程终端：透传给父层 */
 const handleSelectRemoteTerminal = (item: RemoteTerminalItem) => {
     emit('selectRemoteTerminal', item);
@@ -542,6 +557,7 @@ defineExpose({
                             :show-cron-task="showCronTaskAction"
                             :show-channel-list="showChannelActions"
                             :i18n="i18n"
+                            :language="language"
                             :theme="theme"
                             class="side-actions-slot"
                             @action="handleSideAction"
@@ -556,12 +572,12 @@ defineExpose({
                         <RemoteTerminalList
                             v-if="showRemoteTerminalList && isClawApplication"
                             ref="remoteTerminalRef"
-                            :title="i18n.remoteTerminal || '远程终端'"
+                            :title="i18n.remoteTerminal"
                             :items="remoteTerminalItems"
                             :active-id="currentRemoteTerminalId"
-                            :empty-text="i18n.remoteTerminalEmpty || '暂无远程终端'"
+                            :empty-text="i18n.remoteTerminalEmpty"
                             :default-collapsed="remoteTerminalDefaultCollapsed"
-                            :setting-tip="i18n.remoteTerminalSetting || '渠道设置'"
+                            :setting-tip="i18n.remoteTerminalSetting"
                             :use-internal-fetch="remoteTerminalUseInternalFetch"
                             :channel-list-api="remoteTerminalListApi"
                             :space-id="remoteTerminalSpaceId"
@@ -570,17 +586,27 @@ defineExpose({
                             :channel-setting-user-id="channelSettingUserId"
                             :channel-setting-agent-id="channelSettingAgentId"
                             :theme="theme"
+                            :language="language"
                             @select="handleSelectRemoteTerminal"
                             @setting="handleRemoteTerminalSetting"
                             @loaded="handleRemoteTerminalLoaded"
                         />
+                        <!--
+                          定时任务分组（对齐 smart-webim task-group）：
+                            1. hide-when-empty：list 为空时整组（含标题）不渲染，即"无定时任务时不显示该菜单"
+                            2. collapsible：支持点击标题「下拉收起」列表体
+                        -->
                         <SideGroupList
                             v-if="showCronTaskList && isClawApplication"
-                            :title="i18n.cronTask || '定时任务'"
+                            :title="i18n.cronTask"
                             :items="cronTaskItems"
                             :active-id="currentCronTaskId"
                             :theme="theme"
+                            :hide-when-empty="true"
+                            collapsible
+                            :menu-options="cronTaskMenuOptions"
                             @select="handleSelectCronTask"
+                            @menu-select="handleCronTaskMenuSelect"
                         />
                         <HistoryList
                             :conversations="displayConversations"
@@ -588,6 +614,8 @@ defineExpose({
                             :chattingConversationIds="chattingConversationIds"
                             :todayText="i18n.today"
                             :recentText="i18n.recent"
+                            :i18n="i18n"
+                            :language="language"
                             @select="handleSelectConversation"
                             @delete="handleDeleteConversation"
                         />
@@ -612,6 +640,7 @@ defineExpose({
                         :selectLanguageText="i18n.selectLanguage"
                         :logoutText="i18n.logout"
                         :isMobile="isMobile"
+                        :language="language"
                         @toggleTheme="handleToggleTheme"
                         @changeLanguage="handleChangeLanguage"
                         @logout="handleLogout"

@@ -415,18 +415,18 @@ function buildFilters(): Array<{ key: string; values: string[] }> {
     const list: Array<{ key: string; values: string[] }> = [];
     if (activeTab.value === 'builtin') {
         if (filterOfficial.value) {
-            list.push({ key: 'type', values: ['1'] }); // OFFICIAL
+            list.push({ key: 'ProviderType', values: ['1'] }); // OFFICIAL
         } else {
-            list.push({ key: 'type', values: ['1', '2'] }); // OFFICIAL + THIRD_PARTY
+            list.push({ key: 'ProviderType', values: ['1', '2'] }); // OFFICIAL + THIRD_PARTY
         }
         if (activeCategory.value && activeCategory.value !== 'all') {
             list.push({ key: 'CategoryKey', values: [activeCategory.value] });
         }
     } else if (activeTab.value === 'shared') {
-        list.push({ key: 'type', values: ['4'] }); // SHARED
+        list.push({ key: 'ProviderType', values: ['4'] }); // CUSTOM_SHARED
     } else {
         // custom tab
-        list.push({ key: 'type', values: ['3'] }); // CUSTOM
+        list.push({ key: 'ProviderType', values: ['3'] }); // CUSTOM
         if (filterShareStatus.value) {
             list.push({ key: 'ShareStatus', values: ['1'] });
         }

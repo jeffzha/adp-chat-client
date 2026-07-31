@@ -96,6 +96,10 @@
         "service": "adp",
         "headers.X-TC-Version": "2026-05-20"
     },
+    "DescribeSkillSummaryList": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20"
+    },
     "DescribePlugin": {
         "service": "adp",
         "headers.X-TC-Version": "2026-05-20"

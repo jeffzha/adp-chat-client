@@ -75,6 +75,16 @@ export interface SideI18n {
   switchApplication?: string
   /** 渠道展开列表按钮文案 */
   channelList?: string
+  /** 定时任务列表项「更多操作」菜单-查看详情文案 */
+  viewCronTaskDetail?: string
+  /** 会话历史列表分组标题（HistoryList 顶部） */
+  taskListTitle?: string
+  /** 会话「进行中」aria/title 文案 */
+  inProgress?: string
+  /** 删除会话 aria/title 文案 */
+  deleteConversation?: string
+  /** N 天前（HistoryList 相对时间后缀，如 "3天前"→"3 d ago"，需与 {days} 占位符配合） */
+  daysAgo?: string
 }
 
 /** 聊天国际化文本 */
@@ -209,6 +219,8 @@ export interface FilePreviewI18n {
   download?: string
   /** 开始下载提示（{name} 为文件名占位符） */
   downloadStarted?: string
+  /** 文件列表为空时的提示文本 */
+  emptyFile?: string
 }
 
 /** 侧边栏布局 Props */
@@ -294,6 +306,11 @@ export const defaultSideI18n: Required<SideI18n> = {
   remoteTerminalSetting: '渠道设置',
   switchApplication: '切换应用',
   channelList: '展开列表',
+  viewCronTaskDetail: '查看详情',
+  taskListTitle: '任务列表',
+  inProgress: '进行中',
+  deleteConversation: '删除会话',
+  daysAgo: '{days}天前',
 }
 
 /** 聊天 i18n 默认值 */
@@ -396,6 +413,7 @@ export const defaultFilePreviewI18n: Required<FilePreviewI18n> = {
   unsupported: '暂不支持预览该文件格式',
   download: '下载',
   downloadStarted: '开始下载: {name}',
+  emptyFile: '暂无文件',
 }
 
 // ============================================================
@@ -420,6 +438,11 @@ export const defaultSideI18nEn: Required<SideI18n> = {
   remoteTerminalSetting: 'Channel settings',
   switchApplication: 'Switch Application',
   channelList: 'Expand list',
+  viewCronTaskDetail: 'View details',
+  taskListTitle: 'Tasks',
+  inProgress: 'In progress',
+  deleteConversation: 'Delete conversation',
+  daysAgo: '{days}d ago',
 }
 
 /** 聊天 i18n 英文默认值 */
@@ -522,6 +545,7 @@ export const defaultFilePreviewI18nEn: Required<FilePreviewI18n> = {
   unsupported: 'This file format is not supported for preview',
   download: 'Download',
   downloadStarted: 'Downloading: {name}',
+  emptyFile: 'No files',
 }
 
 /** 根据语言获取 i18n 默认值 */

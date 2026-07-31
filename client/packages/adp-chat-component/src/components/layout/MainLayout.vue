@@ -13,7 +13,7 @@ import { Avatar as TAvatar, Layout as TLayout, Content as TContent, Header as TH
 
 // TAvatar, TLayout, TContent, THeader, TFooter 已导入，模板中使用对应组件
 import type { ChatRelatedProps, ChatI18n, ChatItemI18n, SenderI18n } from '../../model/type';
-import { chatRelatedPropsDefaults, defaultChatI18n } from '../../model/type';
+import { chatRelatedPropsDefaults, defaultChatI18n, defaultChatI18nEn } from '../../model/type';
 
 export interface Props extends ChatRelatedProps {
     /** 当前应用信息 */
@@ -90,7 +90,7 @@ const props = withDefaults(defineProps<Props>(), {
     chatList: () => [],
     isChatting: false,
     showSidebarToggle: true,
-    aiWarningText: '内容由AI生成，仅供参考',
+    aiWarningText: '',
     isUploading: false,
     channelInputDisabled: false,
     channelDividerText: '',
@@ -106,10 +106,12 @@ const props = withDefaults(defineProps<Props>(), {
     suggestionApi: '/suggestions',
 });
 
-// 合并 i18n 配置，获取 createConversation 文本
-const createConversationText = computed(() => 
-    props.i18n?.createConversation ?? defaultChatI18n.createConversation
-);
+// 合并 i18n 配置，获取 createConversation 文本（外部传入 > 按 language 选中/英默认值）
+const createConversationText = computed(() => {
+    if (props.i18n?.createConversation) return props.i18n.createConversation;
+    const defaults = props.language?.startsWith('en') ? defaultChatI18nEn : defaultChatI18n;
+    return defaults.createConversation;
+});
 
 const emit = defineEmits<{
     /** 切换侧边栏显示/隐藏 */
@@ -216,7 +218,7 @@ defineExpose({
         <THeader class="layout-header">
             <div class="header-app-container">
                     <SidebarToggle :theme="theme"  @toggle="handleToggleSidebar" />
-                    <CreateConversation :tooltipText="createConversationText" :theme="theme" @create="handleCreateConversation" />
+                    <CreateConversation :tooltipText="createConversationText" :theme="theme" :language="language" @create="handleCreateConversation" />
                     <TAvatar :imageProps="{
                             lazy: true,
                             loading: ''
@@ -282,7 +284,7 @@ defineExpose({
             </Chat>
         </TContent>
         <TFooter class="layout-footer">
-            <AIWarning :text="aiWarningText" />
+            <AIWarning :text="aiWarningText" :language="language" />
         </TFooter>
     </TLayout>
 </template>
@@ -309,7 +311,6 @@ defineExpose({
     justify-content: space-between;
     align-items: center;
     height: 56px;
-    border-bottom: 1px solid var(--td-component-stroke);
 }
 .header-app-settings{
     display: flex;

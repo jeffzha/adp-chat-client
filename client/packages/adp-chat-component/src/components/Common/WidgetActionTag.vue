@@ -1,16 +1,31 @@
 <!-- Widget Action 标签组件：显示 "已进行操作" 提示 -->
 <template>
   <div class="widget-action-tag">
-    <span class="widget-action-text">{{ text }}</span>
+    <span class="widget-action-text">{{ displayText }}</span>
   </div>
 </template>
 
 <script setup lang="ts">
-withDefaults(defineProps<{
-  /** 显示文本，默认为 "已进行操作" */
+import { computed } from 'vue';
+import { defaultChatItemI18n, defaultChatItemI18nEn } from '../../model/type';
+
+interface Props {
+  /** 显示文本；未传时按 language 走 ChatItemI18n.actionPerformed 默认值 */
   text?: string;
-}>(), {
-  text: '已进行操作',
+  /** 当前语言标识（如 'zh-CN'、'en-US'），仅用于内部默认文案 fallback */
+  language?: string;
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  text: '',
+  language: 'zh-CN',
+});
+
+/** 最终展示文本：外部 text 优先，否则按 language 选中/英默认值 */
+const displayText = computed(() => {
+  if (props.text) return props.text;
+  const defaults = props.language?.startsWith('en') ? defaultChatItemI18nEn : defaultChatItemI18n;
+  return defaults.actionPerformed;
 });
 </script>
 

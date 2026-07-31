@@ -484,6 +484,7 @@ class TCADP(BaseVendor):
         response_key: str = None,
         raise_on_error: bool = True,
         variables: dict = None,
+        language: str = None,
     ) -> dict:
         """通用腾讯云 API 转发方法（公开接口）
 
@@ -511,7 +512,7 @@ class TCADP(BaseVendor):
             payload = {}
 
         logging.info(f'[TCADP.forward_request] action={action}, payload={payload}')
-        resp = await tc_request(self.tc_config(), action, payload, service, version, variables=variables, action_overrides=self._action_overrides)
+        resp = await tc_request(self.tc_config(), action, payload, service, version, variables=variables, action_overrides=self._action_overrides, language=language)
         response = resp.get('Response', resp)
 
         if 'Error' in response:
@@ -831,6 +832,7 @@ class TCADP(BaseVendor):
         # 扁平格式：按 RecordId 分组
         from collections import OrderedDict
         groups: OrderedDict = OrderedDict()
+        group_scores: dict[str, int] = {}
 
         for msg in messages:
             record_id = msg.get('RecordId', '')
@@ -848,6 +850,11 @@ class TCADP(BaseVendor):
                     'ExtraInfo': msg.get('ExtraInfo'),
                 }
 
+            # 保留 Score（RateMsgRecord 后 DescribeConversationMessageList 返回更新后的评分）
+            msg_score = msg.get('Score')
+            if msg_score is not None and msg_score != 0:
+                group_scores[record_id] = msg_score
+
             # 将当前 message 作为 Record.Messages 中的一条
             groups[record_id]['Messages'].append({
                 'Type': msg.get('Type', 'reply'),
@@ -861,6 +868,10 @@ class TCADP(BaseVendor):
                 'ExtraInfo': msg.get('ExtraInfo'),
                 'RecordId': record_id,
             })
+
+        # 将评分写入分组后的 Record
+        for record_id, score_val in group_scores.items():
+            groups[record_id]['Score'] = score_val
 
         return list(groups.values())
 
@@ -1431,10 +1442,14 @@ class TCADP(BaseVendor):
         action = "RateMsgRecord"
         payload = {
             "RecordId": record_id,
-            "Score": 1 if score == 1 else 2,
+            "Score": score,
             "BotAppKey": self.config['AppKey'],
         }
-        await tc_request(self.tc_config(), action, payload, action_overrides=self._action_overrides)
+        resp = await tc_request(self.tc_config(), action, payload, action_overrides=self._action_overrides)
+        response = resp.get('Response', resp)
+        if 'Error' in response:
+            logging.error(f"RateMsgRecord failed: {response['Error']}")
+            raise Exception(response['Error'].get('Message', 'RateMsgRecord failed'))
 
     async def get_reference_details(
         self,

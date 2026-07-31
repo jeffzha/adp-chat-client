@@ -55,8 +55,10 @@ export { default as CronTask } from './components/CronTask/CronTask.vue';
 export { default as CronTaskPanel } from './components/CronTask/CronTaskPanel.vue';
 export { default as CronTaskDetail } from './components/CronTask/CronTaskDetail.vue';
 export { default as CronTaskCard } from './components/CronTask/CronTaskCard.vue';
+export { default as CronTaskExecutionSidebar } from './components/CronTask/CronTaskExecutionSidebar.vue';
 export { default as CreateCronTaskDialog } from './components/CronTask/CreateTaskDialog/CreateTaskDialog.vue';
 export { default as DeleteCronTaskDialog } from './components/CronTask/DeleteTaskDialog.vue';
+export { default as TriggerInstanceDrawer } from './components/CronTask/TriggerInstanceDrawer.vue';
 
 // 类型导出
 export type {
@@ -214,6 +216,29 @@ export {
     getCronTaskI18nByLanguage,
 } from './model/cronTask'
 
+// AppTrigger 类型导出
+export type {
+    AppTrigger,
+    AppTriggerSummary,
+    AppTriggerRunLog,
+    AppTriggerInstance,
+    AppTriggerScheduleConfig,
+    AppTriggerScheduleStatus,
+    AppTriggerPromptExecuteConfig,
+    AppTriggerI18n,
+} from './model/appTrigger'
+export {
+    AppTriggerType,
+    AppTriggerExecuteType,
+    AppTriggerStatus,
+    AppTriggerFireType,
+    AppTriggerScope,
+    AppTriggerInstanceSource,
+    defaultAppTriggerI18n,
+    defaultAppTriggerI18nEn,
+    getAppTriggerI18nByLanguage,
+} from './model/appTrigger'
+
 // CronTask API 服务导出
 export {
     defaultCronTaskApiPaths,
@@ -238,6 +263,30 @@ export type {
     MarkTimerTaskRunLogReadPayload,
     TimerIdPayload,
 } from './service/cronTaskApi'
+
+// AppTrigger API 服务导出
+export {
+    defaultAppTriggerApiPaths,
+    createAppTrigger,
+    modifyAppTrigger,
+    describeAppTrigger,
+    describeAppTriggerSummaryList,
+    pauseAppTrigger,
+    resumeAppTrigger,
+    deleteAppTrigger,
+    runAppTriggerNow,
+    describeAppTriggerRunLogList,
+    markAppTriggerRunLogRead,
+    describeAppTriggerInstance,
+} from './service/appTriggerApi'
+export type {
+    AppTriggerApiPaths,
+    CreateAppTriggerPayload,
+    ModifyAppTriggerPayload,
+    DescribeAppTriggerSummaryListPayload,
+    DescribeAppTriggerRunLogListPayload,
+    MarkAppTriggerRunLogReadPayload,
+} from './service/appTriggerApi'
 
 // Composables 导出
 export { useApiConfig } from './composables'

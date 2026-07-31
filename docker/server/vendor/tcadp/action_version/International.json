@@ -78,6 +78,11 @@
         "headers.X-TC-Version": "2026-05-20",
         "headers.X-TC-Region": "ap-jakarta"
     },
+    "DescribeSkillSummaryList": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "headers.X-TC-Region": "ap-jakarta"
+    },
     "BindAgentTool": {
         "service": "lke",
         "headers.X-TC-Version": "2025-11-12",
