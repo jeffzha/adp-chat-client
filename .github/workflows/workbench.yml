@@ -52,7 +52,7 @@ jobs:
       - name: Install locked server dependencies
         run: uv sync --frozen --extra dev
       - name: Run workbench security and behavior regression
-        run: uv run pytest -q test/workbench
+        run: uv run python -m pytest -q test/workbench
       - name: Compile server modules
         run: uv run python -m compileall -q .
 
@@ -77,9 +77,8 @@ jobs:
         run: npm ci --registry=https://registry.npmmirror.com
       - name: Run workbench client tests
         run: bun test packages/adp-chat-component/src/model/sseRequest-reasoning.test.ts packages/app/src/workbench/accessState.test.ts packages/app/src/workbench/scheduledTasks.test.ts packages/app/src/workbench/sandbox.test.ts
-      - name: Type-check component
-        run: npm exec --workspace packages/adp-chat-component -- vue-tsc -b
-      - name: Type-check app
-        run: npm run type-check --workspace packages/app
-      - name: Build production client artifacts
+      # The app package resolves the component's declarations from dist/types.
+      # The root build intentionally builds the component before type-checking
+      # and building the app, matching the production image build order.
+      - name: Type-check and build production client artifacts
         run: npm run build
