@@ -30,6 +30,7 @@ dependencies = [
     { name = "sanic-ext" },
     { name = "sanic-restful-api" },
     { name = "sanic-routing" },
+    { name = "setuptools" },
     { name = "sqlalchemy" },
     { name = "tencentcloud-sdk-python-ags" },
     { name = "termcolor" },
@@ -72,6 +73,7 @@ requires-dist = [
     { name = "sanic-restful-api", specifier = "==0.2.1" },
     { name = "sanic-routing", specifier = "==23.12.0" },
     { name = "sanic-testing", marker = "extra == 'dev'", specifier = "==24.6.0" },
+    { name = "setuptools", specifier = "==84.0.0" },
     { name = "sqlalchemy", specifier = "==2.0.41" },
     { name = "tencentcloud-sdk-python-ags", specifier = "==3.1.149" },
     { name = "termcolor", specifier = "==3.1.0" },
@@ -1178,11 +1180,11 @@ wheels = [
 
 [[package]]
 name = "setuptools"
-version = "80.9.0"
+version = "84.0.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
-sdist = { url = "https://mirrors.aliyun.com/pypi/packages/18/5d/3bf57dcd21979b887f014ea83c24ae194cfcd12b9e0fda66b957c69d1fca/setuptools-80.9.0.tar.gz", hash = "sha256:f36b47402ecde768dbfafc46e8e4207b4360c654f1f3bb84475f0a28628fb19c" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/6d/44/f5da03a8ef95d369145c5bb53050e7877c9f3d312e128605fd9504829143/setuptools-84.0.0.tar.gz", hash = "sha256:f4695c21257f0d9b537ec2692c941d02ee143b7cc1276941349a546573b2ef73" }
 wheels = [
-    { url = "https://mirrors.aliyun.com/pypi/packages/a3/dc/17031897dae0efacfea57dfd3a82fdd2a2aeb58e0ff71b77b87e44edc772/setuptools-80.9.0-py3-none-any.whl", hash = "sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/95/9c/c510029fc6ef33a6275cd2c5d3cecd6613dfd6aa401d57c54f1c18852ccf/setuptools-84.0.0-py3-none-any.whl", hash = "sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670" },
 ]
 
 [[package]]
