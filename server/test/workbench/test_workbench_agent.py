@@ -166,6 +166,47 @@ async def test_turn_limits_modify_full_model_sections_and_verify_readback(monkey
 
 
 @pytest.mark.asyncio
+async def test_turn_limits_initialize_nullable_provider_max_tokens(monkeypatch):
+    record = SimpleNamespace(AgentId="user-agent-9")
+    binding = SimpleNamespace(
+        Status="active",
+        AgentId="user-agent-9",
+        AttemptId="old-attempt",
+        ErrorCode=None,
+        LimitFingerprint=None,
+        LimitsVerifiedAt=None,
+    )
+    db = _limit_db(binding)
+    initial = _agent_detail(max_reasoning_round=100)
+    del initial["Agent"]["Model"]["ModelParameters"]["MaxTokens"]
+    vendor = SimpleNamespace(
+        config={"AppId": "provider-app-7"},
+        forward_request=AsyncMock(
+            side_effect=[
+                initial,
+                {"RequestId": "modify-request"},
+                _agent_detail(max_tokens=8192, max_reasoning_round=20),
+            ]
+        ),
+    )
+    monkeypatch.setattr(CoreAgent, "ensure", AsyncMock(return_value=record))
+
+    await CoreAgent.ensure_turn_limits(
+        db,
+        "account-9",
+        "customer-app-7",
+        vendor,
+        max_output_tokens=8192,
+        max_reasoning_rounds=20,
+    )
+
+    modify_payload = vendor.forward_request.await_args_list[1].args[1]
+    assert modify_payload["Agent"]["Model"]["ModelParameters"]["MaxTokens"] == 8192
+    assert modify_payload["Agent"]["AdvancedConfig"]["MaxReasoningRound"] == 20
+    assert binding.Status == "active"
+
+
+@pytest.mark.asyncio
 async def test_matching_turn_limits_are_verified_without_modify(monkeypatch):
     record = SimpleNamespace(AgentId="user-agent-9")
     binding = SimpleNamespace(

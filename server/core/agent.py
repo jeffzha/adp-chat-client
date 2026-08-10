@@ -287,10 +287,17 @@ class CoreAgent:
         actual_max_tokens = model_parameters.get("MaxTokens")
         actual_reasoning_rounds = advanced_config.get("MaxReasoningRound")
         if (
-            isinstance(actual_max_tokens, bool)
-            or not isinstance(actual_max_tokens, int)
-            or isinstance(actual_reasoning_rounds, bool)
-            or not isinstance(actual_reasoning_rounds, int)
+            actual_max_tokens is not None
+            and (
+                isinstance(actual_max_tokens, bool)
+                or not isinstance(actual_max_tokens, int)
+            )
+        ) or (
+            actual_reasoning_rounds is not None
+            and (
+                isinstance(actual_reasoning_rounds, bool)
+                or not isinstance(actual_reasoning_rounds, int)
+            )
         ):
             raise AgentProvisioningError("provider Agent limit fields are invalid", 503)
         return (
