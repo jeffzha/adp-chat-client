@@ -2131,7 +2131,7 @@ service_configs = {
     },
     'ChinaTencentADP': {
         'adp': {
-            'url': 'https://capi.adp.tencent.com',
+            'url': 'https://adp.tencentcloudapi.com',
             'region': 'ap-guangzhou',
         },       
         'cos': {
