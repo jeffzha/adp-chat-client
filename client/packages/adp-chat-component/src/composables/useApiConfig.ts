@@ -6,6 +6,7 @@ import { computed, watch, toValue, type Ref, type ComputedRef } from 'vue';
 import type { ApiConfig, ApiDetailConfig } from '../service/api';
 import { defaultApiDetailConfig } from '../service/api';
 import { configureAxios } from '../service/httpService';
+import { setWorkbenchMode } from '../service/workbenchMode';
 
 /** 响应式 API 配置类型（支持 Ref 和 ComputedRef） */
 type MaybeRef<T> = T | Ref<T> | ComputedRef<T>;
@@ -53,8 +54,9 @@ export function useApiConfig(options: UseApiConfigOptions): UseApiConfigReturn {
    */
   const setupAxios = () => {
     const config = toValue(apiConfig);
+    setWorkbenchMode(Boolean(config?.workbenchMode));
     if (config && Object.keys(config).length > 0) {
-      const { apiDetailConfig, ...axiosConfig } = config;
+      const { apiDetailConfig, workbenchMode: _workbenchMode, ...axiosConfig } = config;
       if (Object.keys(axiosConfig).length > 0) {
         configureAxios(axiosConfig);
       }

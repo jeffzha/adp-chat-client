@@ -21,6 +21,8 @@ import type { LanguageOption, SideI18n, CommonLayoutProps, ChatMode } from '../.
 import { defaultLanguageOptions, defaultSideI18n, defaultSideI18nEn, commonLayoutPropsDefaults } from '../../model/type';
 
 export interface Props extends CommonLayoutProps {
+    /** Disable all sidebar mutation controls. */
+    readOnly?: boolean;
     /** 是否显示侧边栏，默认值：isSidePanelOverlay 为 true 时为 false，否则为 true */
     visible?: boolean;
     /** 侧边栏是否使用overlay模式（覆盖内容区域） */
@@ -160,6 +162,7 @@ const props = withDefaults(defineProps<Props>(), {
     channelSettingAgentId: '',
     chatMode: 'standard',
     language: 'zh-CN',
+    readOnly: false,
 });
 
 // 合并默认值和传入值（内部默认按 language 选中/英）
@@ -385,6 +388,7 @@ const handleSelectConversation = (conversation: ChatConversation) => {
 };
 
 const handleDeleteConversation = (conversation: ChatConversation) => {
+    if (props.readOnly) return;
     emit('deleteConversation', conversation);
 };
 
@@ -551,7 +555,7 @@ defineExpose({
                         </div>
                         <!-- 快捷入口：新建任务 / 定时任务，参考 smart-webim/conversation-list 顶部两个 new-task-btn -->
                         <SideActions
-                            v-if="showSideActions && isClawApplication"
+                            v-if="!readOnly && showSideActions && isClawApplication"
                             :items="sideActionItems"
                             :active-key="sideActionActiveKey"
                             :show-cron-task="showCronTaskAction"
@@ -582,7 +586,7 @@ defineExpose({
                             :channel-list-api="remoteTerminalListApi"
                             :space-id="remoteTerminalSpaceId"
                             :response-adapter="remoteTerminalResponseAdapter"
-                            :channel-setting-app-id="resolvedChannelSettingAppId"
+                            :channel-setting-app-id="readOnly ? '' : resolvedChannelSettingAppId"
                             :channel-setting-user-id="channelSettingUserId"
                             :channel-setting-agent-id="channelSettingAgentId"
                             :theme="theme"
@@ -604,7 +608,7 @@ defineExpose({
                             :theme="theme"
                             :hide-when-empty="true"
                             collapsible
-                            :menu-options="cronTaskMenuOptions"
+                            :menu-options="readOnly ? [] : cronTaskMenuOptions"
                             @select="handleSelectCronTask"
                             @menu-select="handleCronTaskMenuSelect"
                         />
@@ -616,6 +620,7 @@ defineExpose({
                             :recentText="i18n.recent"
                             :i18n="i18n"
                             :language="language"
+                            :allow-delete="!readOnly"
                             @select="handleSelectConversation"
                             @delete="handleDeleteConversation"
                         />

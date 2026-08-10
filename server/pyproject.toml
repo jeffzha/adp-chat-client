@@ -27,6 +27,9 @@ dependencies = [
     "jwcrypto>=1.5.6",
     "cos-python-sdk-v5>=1.9.30",
     "pydash>=8.0.0",
+    "redis==6.2.0",
+    "e2b-code-interpreter==2.9.0",
+    "tencentcloud-sdk-python-ags==3.1.149",
 ]
 [project.optional-dependencies]
 dev = [

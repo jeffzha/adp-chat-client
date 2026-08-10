@@ -7,6 +7,44 @@ from sqlalchemy.sql import text
 from model.account import Account
 from model.chat import ChatRecord, ChatConversation, SharedConversation
 from model.agent import AgentConfig
+from model.workbench import (
+    WorkbenchAgentBinding,
+    WorkbenchAppLineage,
+    WorkbenchBrowserSession,
+    WorkbenchConversationWorkspace,
+    WorkbenchFileBinding,
+    WorkbenchFileWorkspace,
+    WorkbenchIdentity,
+    WorkbenchRuntimeLease,
+    WorkbenchResourceOutbox,
+    WorkbenchTurn,
+    WorkbenchTurnCancellation,
+    WorkbenchTurnEvidence,
+    WorkbenchTurnEvent,
+    WorkbenchTurnUsageDatum,
+    WorkbenchWorkspace,
+)
+from model.workbench_scheduled import (
+    WorkbenchScheduledAudit,
+    WorkbenchScheduledDelegation,
+    WorkbenchScheduledRun,
+    WorkbenchScheduledTask,
+)
+from model.workbench_integration import (
+    WorkbenchConnectorCredential,
+    WorkbenchConnectorScope,
+    WorkbenchIntegrationAudit,
+    WorkbenchIntegrationBinding,
+    WorkbenchOAuthRevocation,
+    WorkbenchOAuthState,
+)
+from model.workbench_sandbox import (
+    WorkbenchSandbox,
+    WorkbenchSandboxAudit,
+    WorkbenchSandboxPty,
+)
+from model.workbench_sandbox_acceptance import WorkbenchSandboxAcceptanceEvent
+from model.workbench_retention import WorkbenchInboundNonce, WorkbenchRetentionReceipt
 from util.database import create_db_engine, connect_with_retry
 
 from app_factory import TAgenticApp
@@ -59,6 +97,37 @@ class Migration:
             ChatConversation,
             SharedConversation,
             AgentConfig,
+            WorkbenchIdentity,
+            WorkbenchBrowserSession,
+            WorkbenchAgentBinding,
+            WorkbenchAppLineage,
+            WorkbenchRuntimeLease,
+            WorkbenchFileBinding,
+            WorkbenchWorkspace,
+            WorkbenchConversationWorkspace,
+            WorkbenchFileWorkspace,
+            WorkbenchResourceOutbox,
+            WorkbenchScheduledTask,
+            WorkbenchScheduledDelegation,
+            WorkbenchScheduledRun,
+            WorkbenchScheduledAudit,
+            WorkbenchIntegrationBinding,
+            WorkbenchConnectorCredential,
+            WorkbenchConnectorScope,
+            WorkbenchOAuthState,
+            WorkbenchOAuthRevocation,
+            WorkbenchIntegrationAudit,
+            WorkbenchSandbox,
+            WorkbenchSandboxAudit,
+            WorkbenchSandboxPty,
+            WorkbenchSandboxAcceptanceEvent,
+            WorkbenchTurn,
+            WorkbenchTurnEvent,
+            WorkbenchTurnCancellation,
+            WorkbenchTurnEvidence,
+            WorkbenchTurnUsageDatum,
+            WorkbenchRetentionReceipt,
+            WorkbenchInboundNonce,
         ]
 
     @staticmethod

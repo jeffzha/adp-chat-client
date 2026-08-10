@@ -11,6 +11,11 @@
 
 # About
 
+> The hardened new-api workbench deployment includes an optional,
+> disabled-by-default offline scheduler. See
+> [server/WORKBENCH_SCHEDULED_TASKS.md](server/WORKBENCH_SCHEDULED_TASKS.md)
+> for its ownership, delegation, retry and operational contract.
+
 **ADP-Chat-Client** is an open sourced AI Agent application conversation interface. It allows developers to quickly deploy AI agent applications developed on the [Tencent Cloud Agent Development Platform (Tencent Cloud ADP)](https://adp.tencentcloud.com/) as web applications (or embed them into mini-programs, Android, and iOS apps). The client supports real-time conversations, conversation history management, voice input, image understanding, interactive Widgets (charts, forms, etc.), third-party account system integration, and more. It supports fast deployment via Docker.
 
 #### Table of Contents

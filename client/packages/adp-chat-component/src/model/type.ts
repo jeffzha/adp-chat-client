@@ -191,6 +191,25 @@ export interface SenderI18n {
   audioContextNotSupport?: string
   webAudioApiNotSupport?: string
   mediaStreamSourceNotSupport?: string
+  readOnlyNotice?: string
+  send?: string
+  stopGeneration?: string
+  openUploadMenu?: string
+  removeFile?: string
+  openFile?: string
+  secureFileChecking?: string
+  secureFileReady?: string
+  secureFileRejected?: string
+  turnSubmitting?: string
+  turnRunning?: string
+  turnReconnecting?: string
+  turnResumed?: string
+  turnCompleted?: string
+  turnFailedBeforeAccept?: string
+  turnFailedAfterAccept?: string
+  turnCancelRequested?: string
+  turnCancelConfirmed?: string
+  turnProviderUnknown?: string
 }
 
 /** 文件预览面板国际化文本 */
@@ -238,6 +257,8 @@ export interface ChatRelatedProps extends CommonLayoutProps {
   language?: string
   /** 聊天模式：claw-简化模式，standard-标准模式 */
   mode?: ChatMode
+  /** Disable client-side conversation mutations while retaining history access. */
+  readOnly?: boolean
 }
 
 // ============================================================
@@ -276,6 +297,7 @@ export const chatRelatedPropsDefaults = {
   ...commonLayoutPropsDefaults,
   language: 'zh-CN',
   mode: 'standard' as ChatMode,
+  readOnly: false,
 }
 
 /** 默认语言选项 */
@@ -397,6 +419,25 @@ export const defaultSenderI18n: Required<SenderI18n> = {
   audioContextNotSupport: '浏览器不支持AudioContext',
   webAudioApiNotSupport: '浏览器不支持webAudioApi相关接口',
   mediaStreamSourceNotSupport: '不支持MediaStreamSource',
+  readOnlyNotice: '当前工作台为只读模式，可查看历史记录但不能发起或修改任务。',
+  send: '发送',
+  stopGeneration: '停止接收',
+  openUploadMenu: '添加安全附件',
+  removeFile: '移除文件',
+  openFile: '打开文件预览',
+  secureFileChecking: '正在隔离并进行安全检查',
+  secureFileReady: '已通过安全检查',
+  secureFileRejected: '安全检查失败，文件未用于任务',
+  turnSubmitting: '正在安全提交任务',
+  turnRunning: '任务运行中',
+  turnReconnecting: '连接中断，正在恢复（第 {current}/{max} 次）',
+  turnResumed: '连接已恢复，任务继续运行',
+  turnCompleted: '任务已完成',
+  turnFailedBeforeAccept: '任务提交失败，上游未开始执行',
+  turnFailedAfterAccept: '任务执行失败',
+  turnCancelRequested: '已停止接收；后台任务可能仍在继续',
+  turnCancelConfirmed: '任务已停止',
+  turnProviderUnknown: '连接恢复失败，任务最终状态待确认，请勿重复提交',
 }
 
 /** 文件预览面板 i18n 默认值 */
@@ -529,6 +570,25 @@ export const defaultSenderI18nEn: Required<SenderI18n> = {
   audioContextNotSupport: 'Browser does not support AudioContext',
   webAudioApiNotSupport: 'Browser does not support Web Audio API',
   mediaStreamSourceNotSupport: 'MediaStreamSource is not supported',
+  readOnlyNotice: 'This workbench is read-only. You can review history, but cannot start or modify tasks.',
+  send: 'Send',
+  stopGeneration: 'Stop receiving',
+  openUploadMenu: 'Add a secure attachment',
+  removeFile: 'Remove file',
+  openFile: 'Open file preview',
+  secureFileChecking: 'Quarantining and checking this file',
+  secureFileReady: 'Security check passed',
+  secureFileRejected: 'Security check failed; the file was not used',
+  turnSubmitting: 'Submitting the task securely',
+  turnRunning: 'Task running',
+  turnReconnecting: 'Connection interrupted; restoring ({current}/{max})',
+  turnResumed: 'Connection restored; the task is still running',
+  turnCompleted: 'Task completed',
+  turnFailedBeforeAccept: 'Task submission failed before the provider started',
+  turnFailedAfterAccept: 'Task execution failed',
+  turnCancelRequested: 'Stopped receiving updates; the background task may continue',
+  turnCancelConfirmed: 'Task stopped',
+  turnProviderUnknown: 'Could not restore the connection. Final task status is unknown; do not submit it again.',
 }
 
 /** 文件预览面板 i18n 英文默认值 */

@@ -97,7 +97,8 @@ def create_app_with_configs() -> TAgenticApp:
 def create_app() -> TAgenticApp:
     # Set server timezone to UTC. Time display will format in client side with customer's timezone
     os.environ['TZ'] = 'UTC'
-    time.tzset()
+    if hasattr(time, "tzset"):
+        time.tzset()
 
     start_time = time.perf_counter()
     app = create_app_with_configs()

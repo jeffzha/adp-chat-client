@@ -288,26 +288,28 @@ async def tc_request(
     if payload is None:
         payload = {}
     payload = inject_action_payload(action, payload, variables, action_overrides)
+    payload_keys = sorted(str(key) for key in payload)
     payload = json.dumps(payload)
     headers, url = tc_request_prepare(config, action, payload, service, version, action_overrides, language)
     full_url = f'{url}/'
     logging.info(
         '[tc_request] POST %s action=%s service=%s version=%s host=%s '
-        'x-qbot-envset=%s x-tc-canary=%s payload=%s',
+        'x-qbot-envset=%s x-tc-canary=%s payload_keys=%s payload_bytes=%s',
         full_url, action, service,
         headers.get('X-TC-Version'), headers.get('Host'),
         headers.get('X-Qbot-EnvSet'), headers.get('X-TC-Canary'),
-        payload,
+        payload_keys,
+        len(payload.encode('utf-8')),
     )
     async with aiohttp.ClientSession() as session:
         async with session.post(full_url, headers=headers, data=payload) as resp:
             try:
                 return await resp.json()
             except aiohttp.ContentTypeError:
-                body = await resp.text()
+                await resp.read()
                 logging.error(
-                    '[tc_request] Non-JSON response: status=%s, content_type=%s, url=%s, body=%s',
-                    resp.status, resp.content_type, full_url, body[:500],
+                    '[tc_request] Non-JSON response: status=%s, content_type=%s, url=%s',
+                    resp.status, resp.content_type, full_url,
                 )
                 return {
                     'Response': {

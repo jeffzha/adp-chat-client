@@ -94,15 +94,28 @@
     },
     "DescribePluginSummaryList": {
         "service": "adp",
-        "headers.X-TC-Version": "2026-05-20"
+        "headers.X-TC-Version": "2026-05-20",
+        "headers.X-TC-Region": "ap-guangzhou"
     },
     "DescribeSkillSummaryList": {
         "service": "adp",
-        "headers.X-TC-Version": "2026-05-20"
+        "headers.X-TC-Version": "2026-05-20",
+        "headers.X-TC-Region": "ap-guangzhou"
+    },
+    "DescribeSkillDetail": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "headers.X-TC-Region": "ap-guangzhou"
     },
     "DescribePlugin": {
         "service": "adp",
-        "headers.X-TC-Version": "2026-05-20"
+        "headers.X-TC-Version": "2026-05-20",
+        "headers.X-TC-Region": "ap-guangzhou"
+    },
+    "DescribeModelList": {
+        "service": "adp",
+        "headers.X-TC-Version": "2026-05-20",
+        "headers.X-TC-Region": "ap-guangzhou"
     },
     "ListReferShareKnowledge": {
         "service": "adp",

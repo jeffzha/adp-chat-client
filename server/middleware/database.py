@@ -1,4 +1,5 @@
 import logging
+import re
 from contextvars import ContextVar
 
 from core.migration import Migration
@@ -42,6 +43,8 @@ async def _cleanup_session(request):
 
 @app.middleware("request")
 async def inject_session(request):
+    if re.fullmatch(r'/sandbox/sbx_[0-9a-f]{32}/pty/connect', request.server_path):
+        return
     if request.server_path in _SKIP_SESSION_PATHS:
         return
     if request.server_path.startswith('/static'):  # 静态资源不需要 DB session

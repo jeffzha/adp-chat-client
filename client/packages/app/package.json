@@ -12,6 +12,8 @@
     "analyze": "vite build --mode analyze"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "adp-chat-component": "file:../adp-chat-component",
     "axios": "^1.11.0",
     "js-cookie": "^3.0.5",

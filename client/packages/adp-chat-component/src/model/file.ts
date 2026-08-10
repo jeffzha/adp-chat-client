@@ -6,7 +6,7 @@ export type FileCategory = 'image' | 'document';
 /**
  * 文件上传状态
  */
-export type FileUploadStatus = 'uploading' | 'done' | 'error';
+export type FileUploadStatus = 'uploading' | 'security_checking' | 'done' | 'error';
 
 /**
  * 上传文件属性
@@ -23,6 +23,10 @@ export interface FileProps {
   response?: string;
   /** 文档解析后获取的 doc_id，standard 模式下用于文件对话 */
   docId?: string;
+  /** Opaque server-side ownership handle used by workbench chat requests. */
+  workbenchFileId?: string;
+  /** Localized, non-sensitive status presented to assistive technology. */
+  statusMessage?: string;
 }
 
 /**

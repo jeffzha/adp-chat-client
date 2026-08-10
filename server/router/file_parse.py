@@ -3,14 +3,17 @@
 Standard 模式下，文件上传到 COS 后需要调用实时文档解析获取 doc_id，
 然后在聊天时传入 doc_id 字段让大模型能正确解析文件内容。
 """
+import asyncio
 import logging
 
 from sanic.views import HTTPMethodView
 from sanic_restful_api import reqparse
 from sanic.request.types import Request
 from sanic.response import ResponseStream
+from sanic.exceptions import SanicException
 
 from router import login_required
+from config import tagentic_config
 from app_factory import TAgenticApp
 
 app: TAgenticApp = TAgenticApp.get_app()
@@ -42,10 +45,27 @@ class FileParseApi(HTTPMethodView):
 
     @login_required
     async def post(self, request: Request):
+        if tagentic_config.WORKBENCH_MODE:
+            raise SanicException(
+                "workbench document parsing is unavailable until the provider "
+                "supports a verified private-file contract",
+                status_code=503,
+            )
         parser = reqparse.RequestParser()
         parser.add_argument("ApplicationId", type=str, required=True, location="json")
-        parser.add_argument("FileName", type=str, required=True, location="json")
-        parser.add_argument("FileType", type=str, required=True, location="json")
+        parser.add_argument("WorkbenchFileId", type=str, required=False, location="json")
+        parser.add_argument(
+            "FileName",
+            type=str,
+            required=not tagentic_config.WORKBENCH_MODE,
+            location="json",
+        )
+        parser.add_argument(
+            "FileType",
+            type=str,
+            required=not tagentic_config.WORKBENCH_MODE,
+            location="json",
+        )
         parser.add_argument("FileUrl", type=str, required=False, location="json")
         parser.add_argument("CosBucket", type=str, required=False, location="json")
         parser.add_argument("CosUrl", type=str, required=False, location="json")
@@ -58,10 +78,10 @@ class FileParseApi(HTTPMethodView):
         application_id = args['ApplicationId']
         vendor_app = app.get_vendor_app(application_id)
 
-        logging.info(f"[FileParseApi] ApplicationId={application_id}, FileName={args['FileName']}")
+        logging.info("[FileParseApi] application selected")
 
         async def streaming_fn(response):
-            async for data in vendor_app.parse_document(
+            parser_stream = vendor_app.parse_document(
                 account_id=request.ctx.account_id,
                 file_name=args['FileName'],
                 file_type=args['FileType'],
@@ -72,8 +92,14 @@ class FileParseApi(HTTPMethodView):
                 cos_hash=args.get('CosHash', ''),
                 size=args.get('Size', '0'),
                 conversation_id=args.get('ConversationId', ''),
-            ):
-                await response.write(data)
+            )
+            try:
+                async for data in parser_stream:
+                    await response.write(data)
+            except asyncio.CancelledError:
+                raise
+            finally:
+                await parser_stream.aclose()
 
         return ResponseStream(streaming_fn, content_type='text/event-stream; charset=utf-8')
 

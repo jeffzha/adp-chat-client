@@ -54,6 +54,7 @@ export interface Image {
 }
 
 export interface FileInfo {
+  WorkbenchFileId?: string
   FileName: string
   FileSize: string
   FileUrl: string
@@ -400,6 +401,20 @@ export interface ErrorEvent {
   RecordId?: string
 }
 
+export interface WorkbenchTurnEvent {
+  Type: 'workbench.turn'
+  TurnId: string
+  ClientRequestId: string
+  Status: string
+}
+
+export interface WorkbenchTurnStatusEvent {
+  Type: 'workbench.turn_status'
+  TurnId: string
+  Status: string
+  ErrorCode?: string
+}
+
 export type SseEvent =
   | ConversationEvent
   | RequestAckEvent
@@ -413,3 +428,5 @@ export type SseEvent =
   | ReferenceAddedEvent
   | TextDeltaEvent
   | ErrorEvent
+  | WorkbenchTurnEvent
+  | WorkbenchTurnStatusEvent

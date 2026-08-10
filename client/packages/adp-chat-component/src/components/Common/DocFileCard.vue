@@ -4,17 +4,19 @@ import { computed, ref } from 'vue';
 import CustomizedIcon from '../CustomizedIcon.vue';
 import type { FileProps } from '../../model/file';
 import { getFileIconName, formatFileSize } from '../../model/file';
-import type { ThemeProps, ChatMode } from '../../model/type';
-import { themePropsDefaults } from '../../model/type';
+import type { ThemeProps, ChatMode, SenderI18n } from '../../model/type';
+import { defaultSenderI18n, themePropsDefaults } from '../../model/type';
 
 interface Props extends ThemeProps {
     file: FileProps;
     mode?: ChatMode;
+    i18n?: SenderI18n;
 }
 
 const props = withDefaults(defineProps<Props>(), {
     ...themePropsDefaults,
     mode: 'claw',
+    i18n: () => ({}),
 });
 
 const emit = defineEmits<{
@@ -23,7 +25,15 @@ const emit = defineEmits<{
 
 const showPreview = ref(false);
 
-const isUploading = computed(() => props.file.status === 'uploading');
+const isUploading = computed(() => ['uploading', 'security_checking'].includes(props.file.status || ''));
+const mergedI18n = computed(() => ({ ...defaultSenderI18n, ...props.i18n }));
+const statusText = computed(() => {
+    if (props.file.statusMessage) return props.file.statusMessage;
+    if (isUploading.value) return mergedI18n.value.secureFileChecking;
+    if (props.file.status === 'done') return mergedI18n.value.secureFileReady;
+    if (props.file.status === 'error') return mergedI18n.value.secureFileRejected;
+    return '';
+});
 
 const iconName = computed(() => {
     if (props.mode === 'claw') {
@@ -65,7 +75,7 @@ const handleImageClick = () => {
  * 截断文件名显示
  */
 const displayName = computed(() => {
-    const name = props.file.name || '未命名文件';
+    const name = props.file.name || '';
     if (name.length <= 18) return name;
     const ext = name.lastIndexOf('.') > 0 ? name.slice(name.lastIndexOf('.')) : '';
     const base = name.slice(0, name.length - ext.length);
@@ -86,7 +96,8 @@ const fileSizeDisplay = computed(() => {
 
 <template>
     <!-- claw 模式：图片和文件统一展示为 icon + 文件名 + 删除按钮 -->
-    <div v-if="isClaw" class="doc-file-card claw-mode" :class="[fileTypeClass, { 'is-error': file.status === 'error', 'is-image-card': isImage }]"
+    <div v-if="isClaw" class="doc-file-card claw-mode" :class="[fileTypeClass, { 'is-error': file.status === 'error', 'is-image-card': isImage && file.url }]"
+         role="group" :aria-label="`${file.name || ''}. ${statusText}`"
          @mouseenter="isImage && !isUploading ? showPreview = true : null"
          @mouseleave="showPreview = false"
          @click="isImage ? handleImageClick() : undefined">
@@ -97,19 +108,20 @@ const fileSizeDisplay = computed(() => {
         </div>
         <span v-else class="claw-tag-icon" :class="isImage ? 'claw-tag-icon--image' : 'claw-tag-icon--file'" />
         <div class="doc-filename" :title="file.name">{{ displayName }}</div>
-        <span class="delete-btn claw-delete" @click.stop="emit('delete')">
+        <span v-if="statusText" class="doc-file-status" aria-live="polite">{{ statusText }}</span>
+        <button type="button" class="delete-btn claw-delete" :aria-label="`${mergedI18n.removeFile}: ${file.name || ''}`" @click.stop="emit('delete')">
             <CustomizedIcon remote name="basic_close_line" :theme="theme" size="xs" :showHoverBg="false" />
-        </span>
+        </button>
         <!-- 图片 hover 预览弹窗 -->
         <Transition name="fade">
             <div v-if="isImage && showPreview && file.url && !isUploading" class="preview-popup">
-                <img :src="file.url" class="preview-img" alt="" />
+                <img :src="file.url" class="preview-img" :alt="file.name || mergedI18n.openFile" />
             </div>
         </Transition>
     </div>
 
     <!-- standard 模式：图片类型 - 方块缩略图展示 -->
-    <div v-else-if="isImage" class="image-card"
+    <div v-else-if="isImage" class="image-card" role="group" :aria-label="`${file.name || ''}. ${statusText}`"
          @mouseenter="!isUploading ? showPreview = true : null"
          @mouseleave="showPreview = false"
          @click="handleImageClick">
@@ -118,23 +130,23 @@ const fileSizeDisplay = computed(() => {
             <CustomizedIcon name="loading" :theme="theme" nativeIcon :showHoverBg="false" size="s" />
         </div>
         <!-- 图片缩略图 -->
-        <img v-else-if="file.url" class="image-thumb" :src="file.url" alt="" />
+        <img v-else-if="file.url" class="image-thumb" :src="file.url" :alt="file.name || mergedI18n.openFile" />
         <!-- 兜底 icon -->
         <CustomizedIcon remote v-else name="basic_picture_line" :theme="theme" nativeIcon :showHoverBg="false" size="s" />
         <!-- 删除按钮 -->
-        <span class="delete-btn" @click.stop="emit('delete')">
+        <button type="button" class="delete-btn" :aria-label="`${mergedI18n.removeFile}: ${file.name || ''}`" @click.stop="emit('delete')">
             <CustomizedIcon remote name="basic_close_line" :theme="theme" size="xs" :showHoverBg="false" />
-        </span>
+        </button>
         <!-- hover 预览弹窗 -->
         <Transition name="fade">
             <div v-if="showPreview && file.url && !isUploading" class="preview-popup">
-                <img :src="file.url" class="preview-img" alt="" />
+                <img :src="file.url" class="preview-img" :alt="file.name || mergedI18n.openFile" />
             </div>
         </Transition>
     </div>
 
     <!-- standard 模式：文件类型 - 高 card（与 MessageFileCard 一致） -->
-    <div v-else class="doc-file-card standard-file-card" :class="{ 'is-error': file.status === 'error' }">
+    <div v-else class="doc-file-card standard-file-card" :class="{ 'is-error': file.status === 'error' }" role="group" :aria-label="`${file.name || ''}. ${statusText}`">
         <div class="doc-icon-cont">
             <div v-if="isUploading" class="loading-spinner">
                 <CustomizedIcon name="loading" :theme="theme" nativeIcon :showHoverBg="false" size="s" />
@@ -144,11 +156,12 @@ const fileSizeDisplay = computed(() => {
         <div class="doc-file-info">
             <span class="doc-filename" :title="file.name">{{ displayName }}</span>
             <span v-if="fileSizeDisplay" class="doc-file-size">{{ fileSizeDisplay }}</span>
+            <span v-if="statusText" class="doc-file-status" aria-live="polite">{{ statusText }}</span>
         </div>
         <!-- 删除按钮 -->
-        <span class="delete-btn" @click.stop="emit('delete')">
+        <button type="button" class="delete-btn" :aria-label="`${mergedI18n.removeFile}: ${file.name || ''}`" @click.stop="emit('delete')">
             <CustomizedIcon remote name="basic_close_line" :theme="theme" size="xs" :showHoverBg="false" />
-        </span>
+        </button>
     </div>
 </template>
 
@@ -251,6 +264,16 @@ const fileSizeDisplay = computed(() => {
     white-space: nowrap;
 }
 
+.doc-file-status {
+    max-width: 180px;
+    color: var(--td-text-color-secondary, #646a73);
+    font-size: 11px;
+    line-height: 16px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .doc-file-card:hover {
     border-color: rgba(16, 32, 69, 0.20);
 }
@@ -319,10 +342,19 @@ const fileSizeDisplay = computed(() => {
     visibility: hidden;
     transition: opacity 0.15s, color 0.15s;
     z-index: 2;
+    padding: 0;
+    border: 0;
 }
 
 .delete-btn:hover {
     color: var(--td-error-color, #e34d59);
+}
+
+.delete-btn:focus-visible {
+    opacity: 1;
+    visibility: visible;
+    outline: 2px solid var(--td-brand-color, #0052d9);
+    outline-offset: 2px;
 }
 
 /* ===== claw 模式下删除按钮：直接显示、内联、垂直居中 ===== */

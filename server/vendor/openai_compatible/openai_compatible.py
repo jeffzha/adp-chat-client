@@ -3,7 +3,7 @@ import logging
 import uuid
 import aiohttp
 import json
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, Awaitable, Callable
 
 from sqlalchemy import select, desc
 from model.chat import ChatRecord
@@ -55,7 +55,9 @@ class OpenAICompatible(BaseVendor):
         is_new_conversation,
         conversation_cb,
         search_network=True,
-        custom_variables={}
+        custom_variables={},
+        agent_id: str = None,
+        workbench_evidence_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> AsyncGenerator:
         """
         Main chat method using OpenAI-compatible API (V2 Protocol)
@@ -351,6 +353,13 @@ class OpenAICompatible(BaseVendor):
                     CanRating=False,
                 )
             )
+            if workbench_evidence_callback is not None:
+                await workbench_evidence_callback(
+                    {
+                        "Type": EventType.RESPONSE_COMPLETED.value,
+                        "Response": assistant_record.model_dump(exclude_none=True),
+                    }
+                )
             yield to_event(EventType.RESPONSE_COMPLETED, record=assistant_record)
 
             # Update conversation title if new

@@ -7,6 +7,7 @@
             :file="file"
             :theme="theme"
             :mode="mode"
+            :i18n="i18n"
             @delete="handleDelete(index)"
         />
     </div>
@@ -15,18 +16,20 @@
 <script setup lang="ts">
 import DocFileCard from './DocFileCard.vue';
 import type { FileProps } from '../../model/file';
-import type { ThemeProps, ChatMode } from '../../model/type';
+import type { ThemeProps, ChatMode, SenderI18n } from '../../model/type';
 import { themePropsDefaults } from '../../model/type';
 
 interface Props extends ThemeProps {
     fileList: FileProps[];
     mode?: ChatMode;
+    i18n?: SenderI18n;
 }
 
 withDefaults(defineProps<Props>(), {
     ...themePropsDefaults,
     fileList: () => [],
     mode: 'claw',
+    i18n: () => ({}),
 });
 
 const emit = defineEmits<{

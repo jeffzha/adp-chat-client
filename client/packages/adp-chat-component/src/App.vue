@@ -157,7 +157,7 @@ const internalOpen = ref(props.isOpen ?? false);
 const internalTheme = ref(props.theme ?? 'light');
 
 // 内部 language 状态（用于没有 onChangeLanguage 回调时的内部切换）
-const internalLanguage = ref('zh-CN');
+const internalLanguage = ref(props.language || 'zh-CN');
 
 // 监听 props.isOpen 变化，同步内部状态
 watch(() => props.isOpen, (newVal) => {
@@ -171,6 +171,10 @@ watch(() => props.theme, (newVal) => {
     if (newVal !== undefined) {
         internalTheme.value = newVal;
     }
+});
+
+watch(() => props.language, (newVal) => {
+    if (newVal) internalLanguage.value = newVal;
 });
 
 // 计算实际的 open 状态 - 始终使用内部状态，因为 createApp 传入的 props 是静态的
@@ -302,6 +306,7 @@ const actualAutoLoad = computed(() => props.autoLoad);
                 :user="actualUser"
                 :theme="actualTheme"
                 :language="actualLanguage"
+                :readOnly="props.readOnly"
                 :languageOptions="actualLanguageOptions"
                 :isOverlay="actualIsOverlay"
                 :width="actualWidth"

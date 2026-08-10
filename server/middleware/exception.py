@@ -5,6 +5,8 @@ from sanic import json
 from sanic import exceptions
 
 from app_factory import TAgenticApp
+from config import tagentic_config
+from core.workbench_exception_projection import project_workbench_exception
 app = TAgenticApp.get_app()
 
 
@@ -21,6 +23,9 @@ def format_exception(exception):
 # 全局异常捕获，按固定格式输出给客户端
 @app.exception(Exception)
 async def catch_anything(request, exception):
+    if tagentic_config.WORKBENCH_MODE:
+        body, status_code = project_workbench_exception(request, exception)
+        return json(body, status=status_code, headers={"Cache-Control": "no-store"})
     body, status_code = format_exception(exception)
     return json(body, status=status_code)
 

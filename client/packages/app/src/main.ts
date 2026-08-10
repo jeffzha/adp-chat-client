@@ -10,6 +10,7 @@ import router from '@/router'
 import i18n from '@/i18n'
 import { setResponseInterceptor } from 'adp-chat-component'
 import { logout } from '@/service/login'
+import { setWorkbenchSessionError, workbenchRuntime } from '@/workbench/runtime'
 
 // 设置响应拦截器处理登录过期
 setResponseInterceptor(
@@ -17,7 +18,12 @@ setResponseInterceptor(
   async (error) => {
     console.log('[error] app', error)
     if (error.response && error.response.status === 401) {
-      logout(() => router.replace({ name: 'login' }))
+      if (workbenchRuntime.enabled) {
+        setWorkbenchSessionError('The workbench session is unavailable or has expired.')
+        router.replace({ name: 'workbench-unavailable' })
+      } else {
+        logout(() => router.replace({ name: 'login' }))
+      }
     }
     return Promise.reject(error)
   }

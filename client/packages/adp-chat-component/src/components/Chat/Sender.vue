@@ -820,6 +820,7 @@ const onSkillDeleted = (item: any) => {
  */
 const showPlusMenu = ref(false);
 const plusMenuRef = ref<HTMLDivElement | null>(null);
+const plusButtonRef = ref<HTMLButtonElement | null>(null);
 const imageInputRef = ref<HTMLInputElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 
@@ -861,9 +862,20 @@ const handleClickOutside = (e: MouseEvent) => {
 /**
  * 切换加号菜单
  */
-const togglePlusMenu = () => {
+const togglePlusMenu = async () => {
     if (props.isUploading) return;
     showPlusMenu.value = !showPlusMenu.value;
+    if (showPlusMenu.value) {
+        await nextTick();
+        plusMenuRef.value?.querySelector<HTMLButtonElement>('.plus-menu-item')?.focus();
+    }
+};
+
+const handlePlusMenuKeydown = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    showPlusMenu.value = false;
+    plusButtonRef.value?.focus();
 };
 
 /**
@@ -1254,10 +1266,10 @@ defineExpose({
         <!-- 快捷按钮插槽：消息列表为空时，外部注入 assist-quick-buttons（在输入框边框外侧上方） -->
         <slot name="quick-buttons" />
 
-        <div class="sender-container" :class="{ 'is-uploading': isUploading, 'is-focused': inputFocus }">
+        <div class="sender-container" :class="{ 'is-uploading': isUploading, 'is-focused': inputFocus }" :aria-busy="isUploading">
             <!-- 文件预览区域 -->
-            <div v-if="fileList.length > 0" class="sender-files">
-                <FileList :fileList="fileList" :theme="theme" :mode="mode" @delete="handleDeleteFile"/>
+            <div v-if="fileList.length > 0" class="sender-files" role="status" aria-live="polite">
+                <FileList :fileList="fileList" :theme="theme" :mode="mode" :i18n="i18n" @delete="handleDeleteFile"/>
         </div>
 
         <!-- 编辑器区域 -->
@@ -1297,32 +1309,32 @@ defineExpose({
             <!-- 次行（isMobile 时换行）：麦克风、上传文件 → PC 端模型选择器 → Skills、连接器、工具 -->
             <div class="sender-toolbar__extras">
                 <TTooltip v-if="enableVoiceInput && !recording" :content="i18n.startRecord">
-                    <span class="recording-icon" :class="{ isMobile: isMobile }" @click="handleStartRecord">
+                    <button type="button" class="recording-icon" :class="{ isMobile: isMobile }" :aria-label="i18n.startRecord" @click="handleStartRecord">
                         <CustomizedIcon name="voice_input" :theme="theme" :showHoverBg="!isMobile"/>
-                    </span>
+                    </button>
                 </TTooltip>
 
                 <TTooltip v-if="enableVoiceInput && recording" :content="i18n.stopRecord">
-                    <span class="recording-icon stop-icon" :class="{ isMobile: isMobile }" @click="handleStopRecord">
+                    <button type="button" class="recording-icon stop-icon" :class="{ isMobile: isMobile }" :aria-label="i18n.stopRecord" @click="handleStopRecord">
                         <RecordIcon />
-                    </span>
+                    </button>
                 </TTooltip>
 
                 <!-- 加号菜单按钮 -->
                 <div ref="plusMenuRef" class="plus-menu-wrapper">
-                    <span class="plus-btn" :class="{ active: showPlusMenu, disabled: isUploading }" @click="togglePlusMenu">
+                    <button ref="plusButtonRef" type="button" class="plus-btn" :class="{ active: showPlusMenu }" :disabled="isUploading" :aria-label="i18n.openUploadMenu" aria-haspopup="menu" :aria-expanded="showPlusMenu" @click="togglePlusMenu">
                         <CustomizedIcon remote name="basic_new_line" :theme="theme" :showHoverBg="false" />
-                    </span>
+                    </button>
                     <Transition name="fade-up">
-                        <div v-if="showPlusMenu" class="plus-menu-popover">
-                            <div class="plus-menu-item" @click="handleSelectImage">
+                        <div v-if="showPlusMenu" class="plus-menu-popover" role="menu" @keydown="handlePlusMenuKeydown">
+                            <button type="button" role="menuitem" class="plus-menu-item" @click="handleSelectImage">
                                 <CustomizedIcon remote name="basic_picture_line" :theme="theme" size="s" :showHoverBg="false" />
                                 <span>{{ i18n.uploadImage }}</span>
-                            </div>
-                            <div class="plus-menu-item" @click="handleSelectFile">
+                            </button>
+                            <button type="button" role="menuitem" class="plus-menu-item" @click="handleSelectFile">
                                 <CustomizedIcon remote name="basic_file_line" :theme="theme" size="s" :showHoverBg="false" />
                                 <span>{{ i18n.uploadFile }}</span>
-                            </div>
+                            </button>
                         </div>
                     </Transition>
                     <!-- 隐藏的文件选择 input -->
@@ -1358,28 +1370,31 @@ defineExpose({
                 />
 
                 <!-- 连接器按钮 -->
-                <div v-if="enableConnector && mode === 'claw'"  class="toolbar-pill-btn" @click="showConnector = true">
+                <button type="button" v-if="enableConnector && mode === 'claw'" class="toolbar-pill-btn" @click="showConnector = true">
                     <CustomizedIcon remote name="basic_connector_line" size="s" :show-hover-bg="false" :color="'var(--td-text-color-secondary)'" :theme="theme"/>
                     <span class="toolbar-pill-btn__text">{{ skillsI18n.connector }}</span>
-                </div>
+                </button>
 
                 <!-- 工具按钮 -->
-                <div v-if="enableTools && mode === 'claw'" class="toolbar-pill-btn" @click="showPluginManage = true">
+                <button type="button" v-if="enableTools && mode === 'claw'" class="toolbar-pill-btn" @click="showPluginManage = true">
                     <CustomizedIcon remote name="basic_plugin_line" size="s" :show-hover-bg="false" :color="'var(--td-text-color-secondary)'" :theme="theme"/>
                     <span class="toolbar-pill-btn__text">{{ skillsI18n.tools }}</span>
-                </div>
+                </button>
 
                 <!-- 知识库按钮：仅当已启用 KnowledgeRetrievalAnswer 工具时才显示 -->
-                <div v-if="enableKnowledge && hasKnowledgeRetrievalTool && mode === 'claw'" class="toolbar-pill-btn" @click="showKnowledgeDialog = true">
+                <button type="button" v-if="enableKnowledge && hasKnowledgeRetrievalTool && mode === 'claw'" class="toolbar-pill-btn" @click="showKnowledgeDialog = true">
                     <CustomizedIcon remote name="basic_book_line" size="s" :show-hover-bg="false" :color="'var(--td-text-color-secondary)'" :theme="theme"/>
                     <span class="toolbar-pill-btn__text">{{ skillsI18n.knowledgeBase }}</span>
-                </div>
+                </button>
             </div>
 
             <div class="sender-toolbar__right">
-                <CustomizedIcon class="send-icon waiting" :class="{ disabled: sendDisabled }" v-if="!isStreamLoad && !hasContent" nativeIcon :showHoverBg="false" :name="theme === 'dark' ? 'send_dark' : 'send'" @click="handleSend" />
-                <CustomizedIcon class="send-icon success" :class="{ disabled: sendDisabled }" v-if="!isStreamLoad && hasContent" nativeIcon :showHoverBg="false" name="send_fill" @click="handleSend" />
-                <CustomizedIcon class="send-icon stop" v-if="isStreamLoad" nativeIcon :showHoverBg="false" :name="theme === 'dark' ? 'pause_dark' : 'pause'" @click="emit('stop')" />
+                <button v-if="!isStreamLoad" type="button" class="sender-icon-button" :disabled="sendDisabled || !hasContent" :aria-label="i18n.send" @click="handleSend">
+                    <CustomizedIcon class="send-icon" :class="hasContent ? 'success' : 'waiting'" nativeIcon :showHoverBg="false" :name="hasContent ? 'send_fill' : (theme === 'dark' ? 'send_dark' : 'send')" />
+                </button>
+                <button v-else type="button" class="sender-icon-button" :aria-label="i18n.stopGeneration" @click="emit('stop')">
+                    <CustomizedIcon class="send-icon stop" nativeIcon :showHoverBg="false" :name="theme === 'dark' ? 'pause_dark' : 'pause'" />
+                </button>
             </div>
         </div>
 
@@ -1631,6 +1646,10 @@ defineExpose({
     cursor: pointer;
     border-radius: var(--td-radius-medium);
     transition: background 0.15s ease;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    background: transparent;
 }
 
 .plus-btn:hover {
@@ -1645,10 +1664,18 @@ defineExpose({
     background-color: var(--td-bg-color-container-hover);
 }
 
-.plus-btn.disabled {
+.plus-btn:disabled {
     opacity: 0.3;
     cursor: not-allowed;
-    pointer-events: none;
+}
+
+.plus-btn:focus-visible,
+.recording-icon:focus-visible,
+.toolbar-pill-btn:focus-visible,
+.sender-icon-button:focus-visible,
+.plus-menu-item:focus-visible {
+    outline: 2px solid var(--td-brand-color, #0052d9);
+    outline-offset: 2px;
 }
 
 .plus-menu-popover {
@@ -1675,6 +1702,10 @@ defineExpose({
     color: var(--td-text-color-primary);
     cursor: pointer;
     transition: background 0.12s ease;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    text-align: left;
 }
 
 .plus-menu-item:hover {
@@ -1712,6 +1743,10 @@ defineExpose({
     cursor: pointer;
     border-radius: var(--td-radius-medium);
     transition: color 0.15s ease, background 0.15s ease;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    background: transparent;
 }
 
 .recording-icon:hover {
@@ -1731,6 +1766,21 @@ defineExpose({
     align-items: center;
     justify-content: center;
     transition: opacity 0.15s ease, transform 0.12s ease;
+}
+
+.sender-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    background: transparent;
+}
+
+.sender-icon-button:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
 }
 
 .send-icon:active {
@@ -1775,6 +1825,7 @@ defineExpose({
     cursor: pointer;
     white-space: nowrap;
     transition: background-color 0.2s;
+    border: 0;
 }
 
 .toolbar-pill-btn:hover {
@@ -1793,6 +1844,16 @@ defineExpose({
 .sender-toolbar.is-mobile .toolbar-pill-btn__text,
 .sender-toolbar.is-mobile :deep(.skills-popover-trigger__text) {
     display: none;
+}
+
+@media (max-width: 720px) {
+    .sender-toolbar__extras {
+        max-width: 100%;
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        scrollbar-width: none;
+    }
+    .sender-toolbar__extras::-webkit-scrollbar { display: none; }
 }
 
 /* ── @Mention overlay ── */

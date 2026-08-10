@@ -21,6 +21,10 @@ export interface ApiDetailConfig {
     conversationDetailApi?: string;
     /** 发送消息接口路径 */
     sendMessageApi?: string;
+    /** Durable workbench Turn replay endpoint. */
+    turnEventsApi?: string;
+    /** Persist a local cancellation intent for a durable workbench Turn. */
+    turnCancelApi?: string;
     /** 评分接口路径 */
     rateApi?: string;
     /** 分享接口路径 */
@@ -67,6 +71,8 @@ export interface ApiDetailConfig {
 export interface ApiConfig extends AxiosRequestConfig {
     /** API 详细路径配置 */
     apiDetailConfig?: ApiDetailConfig;
+    /** Trust application and Agent identity to the workbench backend. */
+    workbenchMode?: boolean;
 }
 
 /**
@@ -78,6 +84,8 @@ export const defaultApiDetailConfig: ApiDetailConfig = {
     conversationDeleteApi: '/chat/conversation/delete',
     conversationDetailApi: '/chat/messages',
     sendMessageApi: '/chat/message',
+    turnEventsApi: '/chat/turn/events',
+    turnCancelApi: '/chat/turn/cancel',
     rateApi: '/feedback/rate',
     shareApi: '/share/create',
     userInfoApi: '/account/info',
@@ -262,6 +270,43 @@ export const sendMessage = async (
     return httpService.post(apiPath, params, _options);
 };
 
+export const resumeWorkbenchTurn = async (
+    turnId: string,
+    lastEventId: number,
+    options?: AxiosRequestConfig,
+    apiPath?: string,
+): Promise<any> => {
+    const path = apiPath || defaultApiDetailConfig.turnEventsApi!;
+    return httpService.get(
+        path,
+        { TurnId: turnId },
+        {
+            responseType: 'stream',
+            adapter: 'fetch',
+            timeout: 1000 * 60 * 90,
+            ...options,
+            headers: {
+                ...options?.headers,
+                'Last-Event-ID': String(lastEventId),
+            },
+        },
+    );
+};
+
+export const requestWorkbenchTurnCancel = async (
+    turnId: string,
+    apiPath?: string,
+): Promise<{
+    TurnId: string;
+    Status: 'cancel_requested' | 'cancel_confirmed' | string;
+    ProviderCancelSupported: boolean;
+    BackgroundConsumptionContinues: boolean;
+}> => {
+    const path = apiPath || defaultApiDetailConfig.turnCancelApi!;
+    if (!turnId) throw new Error('turnId is required');
+    return httpService.post(path, { TurnId: turnId, ReasonCode: 'user_stop' });
+};
+
 /**
  * 评分
  * @param params 评分参数
@@ -315,7 +360,7 @@ export const fetchUserInfo = async (apiPath?: string): Promise<{ Id: string; Nam
  * @param applicationId 应用ID
  * @param apiPath API 路径
  */
-export const uploadFile = async (file: File, applicationId?: string, apiPath?: string, mode?: string): Promise<any> => {
+export const uploadFile = async (file: File, applicationId?: string, apiPath?: string, mode?: string): Promise<unknown> => {
     if (!apiPath) throw new Error('apiPath is required');
     // 构建带参数的 URL
     const params = new URLSearchParams();
@@ -324,6 +369,9 @@ export const uploadFile = async (file: File, applicationId?: string, apiPath?: s
     }
     if (file.type) {
         params.append('Type', file.type);
+    }
+    if (file.name) {
+        params.append('Name', file.name);
     }
     if (mode) {
         params.append('Mode', mode);
@@ -1031,7 +1079,9 @@ export const saveAgentConfig = async (
 /** CreateConversation 会话类型 */
 export const ConversationType = {
     /** Web 端会话 */
-    CONVERSATION_TYPE_VISITOR: 1   
+    CONVERSATION_TYPE_VISITOR: 1,
+    /** Workbench API identity-chain conversation. */
+    CONVERSATION_TYPE_API: 5,
 } as const;
 
 export type ConversationTypeValue = typeof ConversationType[keyof typeof ConversationType];

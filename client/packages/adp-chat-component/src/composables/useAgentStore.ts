@@ -25,6 +25,7 @@ import {
 } from '../service/api';
 import { fetchGlobalAgent, modifyAgent as modifyAgentApi, modifyAgentSkillList as modifyAgentSkillListApi, type AgentModelInfo } from '../service/skillsApi';
 import type { ChatMode } from '../model/type';
+import { isWorkbenchMode } from '../service/workbenchMode';
 
 /**
  * 将后端返回的原始 Pattern 值归一化为业务侧统一使用的 ChatMode。
@@ -41,6 +42,8 @@ const patternToMode = (pattern: string | null | undefined): ChatMode => {
 const agentIdMap = ref<Record<string, string>>({});
 /** 按 applicationId 维度的加载状态：{ [applicationId]: boolean } */
 const loadingMap = ref<Record<string, boolean>>({});
+/** Server-side provisioning errors, populated only for trusted workbench mode. */
+const errorMap = ref<Record<string, string>>({});
 /** 按 applicationId 维度的 inflight Promise，避免并发重复请求 */
 const inflightMap = new Map<string, Promise<string>>();
 
@@ -204,9 +207,10 @@ export function useAgentStore() {
         const task = (async (): Promise<string> => {
             try {
                 loadingMap.value = { ...loadingMap.value, [applicationId]: true };
+                errorMap.value = { ...errorMap.value, [applicationId]: '' };
 
                 // 1) 优先查本地后端 DB（非强制刷新时），命中则直接返回，不再走外部 ADP 接口
-                if (!force) {
+                if (!force || isWorkbenchMode()) {
                     try {
                         const localResp = await getAgentConfig(
                             applicationId,
@@ -217,9 +221,31 @@ export function useAgentStore() {
                                 ...agentIdMap.value,
                                 [applicationId]: localAgentId,
                             };
+                            errorMap.value = { ...errorMap.value, [applicationId]: '' };
                             return localAgentId;
                         }
+                        if (isWorkbenchMode()) {
+                            errorMap.value = {
+                                ...errorMap.value,
+                                [applicationId]: 'Server-side Agent provisioning did not return a valid Agent id.',
+                            };
+                            return '';
+                        }
                     } catch (e) {
+                        if (isWorkbenchMode()) {
+                            const responseMessage = (e as { response?: { data?: { message?: string; error?: { message?: string } } } })
+                                ?.response?.data;
+                            const message = responseMessage?.error?.message
+                                || responseMessage?.message
+                                || (e instanceof Error ? e.message : '')
+                                || 'Server-side Agent provisioning failed. Please contact an administrator.';
+                            errorMap.value = { ...errorMap.value, [applicationId]: message };
+                            console.error(
+                                '[useAgentStore] server-side Agent ensure failed; browser fallback is disabled in workbench mode:',
+                                e
+                            );
+                            return '';
+                        }
                         // 本地查询失败不阻断主流程，继续走外部接口兜底
                         console.warn(
                             '[useAgentStore] 本地 AgentConfig 查询失败，回退外部接口:',
@@ -227,6 +253,10 @@ export function useAgentStore() {
                         );
                     }
                 }
+
+                // The browser must never provision or persist Agent ids in
+                // workbench mode. GET /agent/config performs server-side ensure.
+                if (isWorkbenchMode()) return '';
 
                 // 2) 调用 CopyAgentFromApp 创建用户 Agent
                 const payload: CopyAgentFromAppPayload = {
@@ -722,6 +752,8 @@ export function useAgentStore() {
         agentIdMap: readonly(agentIdMap) as Readonly<Ref<Record<string, string>>>,
         /** 全量 applicationId -> 加载状态 映射（只读响应式引用） */
         loadingMap: readonly(loadingMap) as Readonly<Ref<Record<string, boolean>>>,
+        /** Workbench server-side Agent provisioning errors. */
+        errorMap: readonly(errorMap) as Readonly<Ref<Record<string, string>>>,
         /** 全量 applicationId -> AgentDetail 配置详情映射（只读响应式引用） */
         agentDetailMap: readonly(agentDetailMap) as Readonly<Ref<Record<string, AgentDetail>>>,
         /** 全量 applicationId -> Agent 详情加载状态映射（只读响应式引用） */

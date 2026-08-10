@@ -8,6 +8,11 @@ import { useI18n } from 'vue-i18n';
 import { languageMap } from '@/i18n';
 import { getBaseURL } from '@/utils/url';
 import Logo from '@/assets/img/favicon.png';
+import WorkbenchSummary from '@/components/workbench/WorkbenchSummary.vue';
+import WorkbenchScheduledTasks from '@/components/workbench/WorkbenchScheduledTasks.vue';
+import WorkbenchIntegrations from '@/components/workbench/WorkbenchIntegrations.vue';
+import WorkbenchSandbox from '@/components/workbench/WorkbenchSandbox.vue';
+import { setWorkbenchSessionError, workbenchReadOnly, workbenchRuntime } from '@/workbench/runtime';
 
 const router = useRouter()
 const uiStore = useUiStore()
@@ -16,6 +21,9 @@ const { t } = useI18n();
 
 // 当前选中的应用和会话（用于 URL 同步）
 const currentApplicationId = ref<string>('');
+const scheduledTasksOpen = ref(false);
+const integrationsOpen = ref(Boolean(route.query.integration_oauth));
+const sandboxOpen = ref(false);
 const currentConversationId = ref<string>('');
 // 当前会话是否为渠道（访客）会话：由 URL 中是否包含 /channel/ 段判定。
 // 渠道会话不落地本地 chat_conversation 表（权威源在 CAPI DescribeConversationList），
@@ -35,9 +43,10 @@ const currentConversationCronTaskLogId = ref<string>('');
 
 // API 配置 - 使用组件自动加载数据
 
-const apiConfig: ApiConfig = {
+const apiConfig = computed<ApiConfig>(() => ({
     baseURL: getBaseURL(),
     timeout: 1000 * 60,
+    workbenchMode: workbenchRuntime.enabled,
     apiDetailConfig: {
         applicationListApi: '/application/list',
         conversationListApi: '/chat/conversations',
@@ -50,7 +59,7 @@ const apiConfig: ApiConfig = {
         asrUrlApi: '/helper/asr/url',
         systemConfigApi: '/system/config',
     }
-};
+}));
 
 // 语言选项
 const languageOptions = computed(() => {
@@ -154,6 +163,19 @@ onMounted(async () => {
 //   定时任务：/:applicationId/timertask/:conversationId?triggerId=xxx&logId=yyy （route.name === 'home-timertask'）
 const updateFromUrl = () => {
     console.log('updateFromUrl', route.name, route.params, route.query);
+    if (workbenchRuntime.enabled) {
+        currentApplicationId.value = currentApplicationId.value || '';
+        currentConversationId.value = (route.query.conversationId as string) || '';
+        currentConversationChannel.value = route.query.source === 'channel';
+        currentConversationCronTask.value = route.query.source === 'timertask';
+        currentConversationCronTaskTriggerId.value = currentConversationCronTask.value
+            ? ((route.query.triggerId as string) || '')
+            : '';
+        currentConversationCronTaskLogId.value = currentConversationCronTask.value
+            ? ((route.query.logId as string) || '')
+            : '';
+        return;
+    }
     currentApplicationId.value = (route.params.applicationId as string) || '';
     currentConversationId.value = (route.params.conversationId as string) || '';
     currentConversationChannel.value = route.name === 'home-channel';
@@ -173,6 +195,8 @@ watch(() => route.params.conversationId, () => updateFromUrl());
 watch(() => route.name, () => updateFromUrl());
 watch(() => route.query.triggerId, () => updateFromUrl());
 watch(() => route.query.logId, () => updateFromUrl());
+watch(() => route.query.conversationId, () => updateFromUrl());
+watch(() => route.query.source, () => updateFromUrl());
 
 /**
  * 更新 URL
@@ -181,6 +205,16 @@ watch(() => route.query.logId, () => updateFromUrl());
  * - 否则使用 home 路由
  */
 const updateUrl = (fromChannel = false, fromCronTask = false, triggerId = '', logId = '') => {
+    if (workbenchRuntime.enabled) {
+        const query: Record<string, string> = {};
+        if (currentConversationId.value) query.conversationId = currentConversationId.value;
+        if (fromCronTask) query.source = 'timertask';
+        else if (fromChannel) query.source = 'channel';
+        if (fromCronTask && triggerId) query.triggerId = triggerId;
+        if (fromCronTask && logId) query.logId = logId;
+        router.push({ name: 'home', query });
+        return;
+    }
     // 会话 id 必须依附在某个 applicationId 之下，避免出现无 app 的孤儿会话 URL
     const params: Record<string, string> = {};
     if (currentApplicationId.value) {
@@ -207,6 +241,7 @@ const updateUrl = (fromChannel = false, fromCronTask = false, triggerId = '', lo
 
 // 事件处理函数
 const handleSelectApplication = (app: Application) => {
+    if (workbenchRuntime.enabled && currentApplicationId.value) return;
     currentApplicationId.value = app.ApplicationId || '';
     currentConversationId.value = '';
     currentConversationChannel.value = false;
@@ -300,11 +335,30 @@ const handleChangeLanguage = (key: string) => {
 };
 
 const handleLogout = () => {
-    logout(() => router.replace({ name: 'login' }));
+    if (workbenchRuntime.enabled) {
+        window.location.assign('/');
+    } else {
+        logout(() => router.replace({ name: 'login' }));
+    }
 };
 
 // 数据加载完成回调
 const handleDataLoaded = (type: 'applications' | 'conversations' | 'chatList' | 'user', data: any) => {
+    if (type === 'applications' && workbenchRuntime.enabled) {
+        if (!Array.isArray(data) || data.length !== 1 || !data[0]?.ApplicationId) {
+            setWorkbenchSessionError('The trusted workbench application is unavailable.')
+            router.replace({ name: 'workbench-unavailable' })
+            return;
+        }
+        currentApplicationId.value = data[0].ApplicationId;
+        updateUrl(
+            currentConversationChannel.value,
+            currentConversationCronTask.value,
+            currentConversationCronTaskTriggerId.value,
+            currentConversationCronTaskLogId.value,
+        );
+        return;
+    }
     // 初始化时从 URL 同步状态
     if (type === 'applications' && data.length > 0) {
         // 如果 URL 没有指定应用，默认选中第一个
@@ -346,9 +400,38 @@ const handleConversationChange = (conversationId: string) => {
 </script>
 
 <template>
-    <ADPChat
+  <div class="home-shell" :class="{ 'workbench-shell': workbenchRuntime.enabled, 'workbench-read-only': workbenchReadOnly }">
+    <WorkbenchSummary
+      v-if="workbenchRuntime.enabled"
+      @openScheduledTasks="scheduledTasksOpen = true"
+      @openIntegrations="integrationsOpen = true"
+      @openSandbox="sandboxOpen = true"
+    />
+    <WorkbenchScheduledTasks
+      v-if="workbenchRuntime.enabled && workbenchRuntime.config?.capabilities?.includes('scheduled_tasks')"
+      v-model:open="scheduledTasksOpen"
+      :readOnly="workbenchReadOnly"
+    />
+    <WorkbenchIntegrations
+      v-if="workbenchRuntime.enabled"
+      v-model:open="integrationsOpen"
+      :readOnly="workbenchReadOnly"
+    />
+    <WorkbenchSandbox
+      v-if="workbenchRuntime.enabled && workbenchRuntime.config?.sandbox_enabled && workbenchRuntime.config?.capabilities?.includes('sandbox')"
+      v-model:open="sandboxOpen"
+      :readOnly="workbenchReadOnly"
+      :conversationId="currentConversationId"
+      :shellAvailable="workbenchRuntime.config?.shell_enabled === true"
+      :filesAvailable="workbenchRuntime.config?.files_enabled === true && workbenchRuntime.config?.capabilities?.includes('files') === true"
+      :codeAvailable="workbenchRuntime.config?.code_execution_enabled === true"
+      :ptyAvailable="workbenchRuntime.config?.pty_enabled === true"
+    />
+    <div class="home-shell__chat">
+      <ADPChat
         :apiConfig="apiConfig"
         :autoLoad="true"
+        :readOnly="workbenchReadOnly"
         :theme="uiStore.theme || 'light'"
         :language="uiStore.language || 'zh'"
         :languageOptions="languageOptions"
@@ -378,8 +461,21 @@ const handleConversationChange = (conversationId: string) => {
         @logout="handleLogout"
         @dataLoaded="handleDataLoaded"
         @conversationChange="handleConversationChange"
-    />
+      />
+    </div>
+  </div>
 </template>
 
 <style scoped>
+.home-shell { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.home-shell__chat { min-height: 0; flex: 1; }
+.workbench-shell :deep(.current-application__switch),
+.workbench-shell :deep(.application-list),
+.workbench-shell :deep(.drawer-footer),
+.workbench-shell :deep(.header-app-settings) { display: none !important; }
+
+@media (max-width: 720px) {
+  .workbench-shell { height: 100dvh; padding-bottom: env(safe-area-inset-bottom); }
+  .home-shell__chat { overflow: hidden; }
+}
 </style>

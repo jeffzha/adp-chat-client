@@ -1,7 +1,11 @@
 import logging
+import ipaddress
 import re
-from typing import Any
-from urllib.parse import quote
+import socket
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable
+from urllib.parse import quote, urlsplit
+from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sanic.request.types import Request
 import asyncio
@@ -12,6 +16,11 @@ from util.warehouse import AsyncWareHouseS3
 from util.cos import upload, get_presigned_download_url, get_presigned_preview_url
 
 from core.completion import CoreCompletion
+from core.workbench_secure_file import (
+    WorkbenchSecureFileError,
+    WorkbenchSecureFilePipeline,
+    WorkbenchStreamingSecretRedactor,
+)
 from config import tagentic_config
 from vendor.interface import (
     BaseVendor,
@@ -27,10 +36,76 @@ from vendor.interface import (
     RecordExtraInfo,
     RecordRole,
     ErrorInfo,
+    FileSizeLimitExceeded,
     extract_text_from_contents,
 )
 from util.helper import to_event
 from util.json_format import custom_dumps
+
+
+class _PinnedPublicResolver(aiohttp.abc.AbstractResolver):
+    """Resolve one provider hostname to a pre-validated immutable address set."""
+
+    def __init__(self, hostname: str, addresses: tuple[tuple[int, str], ...]):
+        self._hostname = hostname
+        self._addresses = addresses
+
+    async def resolve(
+        self,
+        host: str,
+        port: int = 0,
+        family: socket.AddressFamily = socket.AF_UNSPEC,
+    ) -> list[dict[str, Any]]:
+        if host.rstrip(".").lower() != self._hostname:
+            raise OSError("provider workspace resolver host mismatch")
+        matches = [
+            (address_family, address)
+            for address_family, address in self._addresses
+            if family in {socket.AF_UNSPEC, address_family}
+        ]
+        if not matches:
+            raise OSError("provider workspace has no address for the requested family")
+        return [
+            {
+                "hostname": host,
+                "host": address,
+                "port": port,
+                "family": address_family,
+                "proto": socket.IPPROTO_TCP,
+                "flags": socket.AI_NUMERICHOST,
+            }
+            for address_family, address in matches
+        ]
+
+    async def close(self) -> None:
+        return None
+
+
+@dataclass
+class ProviderFileStream:
+    """Owned upstream response streamed with a hard cumulative byte ceiling."""
+
+    session: aiohttp.ClientSession
+    response: aiohttp.ClientResponse
+    max_bytes: int
+    content_type: str
+    file_name: str
+    _closed: bool = False
+
+    async def iter_chunks(self):
+        size = 0
+        async for chunk in self.response.content.iter_chunked(64 * 1024):
+            size += len(chunk)
+            if size > self.max_bytes:
+                raise FileSizeLimitExceeded("provider file exceeds the download limit")
+            yield chunk
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self.response.release()
+        await self.session.close()
 
 
 class TCADP(BaseVendor):
@@ -39,6 +114,197 @@ class TCADP(BaseVendor):
         # 根据 ServiceVendor 加载对应场景的 action_version 配置
         vendor_key = config.get('ServiceVendor', 'ChinaTencentCloud')
         self._action_overrides = load_action_version_config(vendor_key)
+
+    def _workbench_sensitive_values(self) -> tuple[str, ...]:
+        values = {
+            str(value).strip()
+            for value in (
+                self.config.get("AppKey"),
+                self.config.get("SecretId"),
+                self.config.get("SecretKey"),
+                tagentic_config.ADP_SECRET_ID,
+                tagentic_config.ADP_SECRET_KEY,
+                tagentic_config.TC_SECRET_ID,
+                tagentic_config.TC_SECRET_KEY,
+            )
+            if value and len(str(value).strip()) >= 4
+        }
+        return tuple(sorted(values, key=len, reverse=True))
+
+    @staticmethod
+    def _workspace_domain(value: Any) -> str:
+        """Validate the trusted provider's ephemeral Workspace endpoint."""
+
+        domain = str(value or "").strip()
+        if not domain or len(domain) > 2048:
+            raise ValueError("provider workspace domain is invalid")
+        parsed = urlsplit(domain)
+        hostname = str(parsed.hostname or "").rstrip(".").lower()
+        try:
+            port = parsed.port
+        except ValueError as error:
+            raise ValueError("provider workspace domain is invalid") from error
+        if (
+            parsed.scheme != "https"
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+            or port not in {None, 443}
+            or hostname == "localhost"
+            or hostname.endswith((".localhost", ".local", ".internal"))
+        ):
+            raise ValueError("provider workspace domain is not a safe HTTPS endpoint")
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            raise ValueError("provider workspace domain is not publicly routable")
+        suffixes = tuple(
+            suffix.strip().lower().lstrip(".")
+            for suffix in str(
+                tagentic_config.WORKBENCH_WORKSPACE_HOST_SUFFIXES or ""
+            ).split(",")
+            if suffix.strip()
+        )
+        if (
+            not suffixes
+            or any(
+                len(suffix) > 253
+                or "." not in suffix
+                or any(
+                    not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                    for label in suffix.split(".")
+                )
+                for suffix in suffixes
+            )
+            or not any(hostname == suffix or hostname.endswith("." + suffix) for suffix in suffixes)
+        ):
+            raise ValueError("provider workspace domain is outside the configured allowlist")
+        return f"https://{hostname}"
+
+    @staticmethod
+    def _workspace_credential(response: Any) -> tuple[str, str, str]:
+        if not isinstance(response, dict):
+            raise ValueError("provider workspace credential response is invalid")
+        credential = response.get("Credential")
+        storage = response.get("SandboxStorage")
+        if not isinstance(credential, dict) or not isinstance(storage, dict):
+            raise ValueError("provider workspace credential response is incomplete")
+        access_token = str(credential.get("AccessToken") or "").strip()
+        token_tag = str(storage.get("TokenTag") or "").strip()
+        if (
+            not 1 <= len(access_token) <= 8192
+            or any(ord(character) < 32 or ord(character) == 127 for character in access_token)
+            or token_tag.lower() != "x-file-ticket"
+        ):
+            raise ValueError("provider workspace credential response is incomplete")
+        return (
+            TCADP._workspace_domain(storage.get("Domain")),
+            "X-File-Ticket",
+            access_token,
+        )
+
+    @staticmethod
+    async def _resolve_workspace_addresses(
+        hostname: str,
+    ) -> tuple[tuple[int, str], ...]:
+        try:
+            resolved = await asyncio.get_running_loop().getaddrinfo(
+                hostname,
+                443,
+                family=socket.AF_UNSPEC,
+                type=socket.SOCK_STREAM,
+                proto=socket.IPPROTO_TCP,
+            )
+        except OSError as error:
+            raise ValueError("provider workspace DNS resolution failed") from error
+        addresses: list[tuple[int, str]] = []
+        for family, _type, _proto, _canonical_name, sockaddr in resolved:
+            if family not in {socket.AF_INET, socket.AF_INET6} or not sockaddr:
+                continue
+            address_text = str(sockaddr[0])
+            try:
+                address = ipaddress.ip_address(address_text)
+            except ValueError as error:
+                raise ValueError("provider workspace DNS response is invalid") from error
+            if not address.is_global:
+                raise ValueError("provider workspace DNS resolved outside the public Internet")
+            candidate = (family, address.compressed)
+            if candidate not in addresses:
+                addresses.append(candidate)
+        if not addresses:
+            raise ValueError("provider workspace DNS returned no public address")
+        return tuple(addresses)
+
+    @classmethod
+    async def _workspace_connector(cls, domain: str) -> aiohttp.TCPConnector:
+        """Resolve, validate and pin the provider address for one TLS connection."""
+
+        hostname = str(urlsplit(domain).hostname or "").rstrip(".").lower()
+        addresses = await cls._resolve_workspace_addresses(hostname)
+        return aiohttp.TCPConnector(
+            resolver=_PinnedPublicResolver(hostname, addresses),
+            use_dns_cache=False,
+        )
+
+    @classmethod
+    async def _workspace_session(
+        cls,
+        domain: str,
+        timeout: aiohttp.ClientTimeout,
+    ) -> aiohttp.ClientSession:
+        connector = await cls._workspace_connector(domain)
+        return aiohttp.ClientSession(timeout=timeout, connector=connector)
+
+    @staticmethod
+    async def _read_bounded(stream: Any, max_bytes: int, error_message: str) -> bytes:
+        chunks = []
+        size = 0
+        async for chunk in stream.iter_chunked(64 * 1024):
+            size += len(chunk)
+            if size > max_bytes:
+                raise FileSizeLimitExceeded(error_message)
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    def _workspace_credential_payload(
+        self,
+        *,
+        app_id: str,
+        workspace_id: str,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Build the documented credential request for the active conversation type."""
+
+        payload: dict[str, Any] = {
+            "AppId": app_id,
+            "Type": 2,
+            "WorkspaceId": workspace_id,
+        }
+        if not tagentic_config.WORKBENCH_MODE:
+            return payload
+        app_key = str(self.config.get("AppKey") or "").strip()
+        normalized_user_id = str(user_id or "").strip()
+        if (
+            not 1 <= len(str(app_id or "").strip()) <= 128
+            or not 1 <= len(str(workspace_id or "").strip()) <= 256
+            or not 1 <= len(app_key) <= 8192
+            or not 1 <= len(normalized_user_id) <= 256
+            or any(ord(character) < 32 for character in normalized_user_id)
+        ):
+            raise ValueError("trusted API Workspace credential context is incomplete")
+        payload.update(
+            {
+                "Type": 5,
+                "AppKey": app_key,
+                "UserId": normalized_user_id,
+            }
+        )
+        return payload
 
     @staticmethod
     def _is_v2_record(record_data: dict[str, Any]) -> bool:
@@ -511,15 +777,29 @@ class TCADP(BaseVendor):
         if payload is None:
             payload = {}
 
-        logging.info(f'[TCADP.forward_request] action={action}, payload={payload}')
+        logging.info(
+            '[TCADP.forward_request] action=%s, payload_keys=%s',
+            action,
+            sorted(str(key) for key in payload),
+        )
         resp = await tc_request(self.tc_config(), action, payload, service, version, variables=variables, action_overrides=self._action_overrides, language=language)
         response = resp.get('Response', resp)
 
         if 'Error' in response:
-            logging.error(f'[TCADP.forward_request] action={action} error={response["Error"]}')
+            provider_error = response["Error"]
+            logging.error(
+                '[TCADP.forward_request] action=%s failed, code=%s, request_id=%s',
+                action,
+                provider_error.get('Code') if isinstance(provider_error, dict) else None,
+                response.get('RequestId'),
+            )
             if raise_on_error:
-                error_msg = response['Error'].get('Message', str(response['Error']))
-                raise Exception(f'{action} failed: {error_msg}')
+                error_code = (
+                    provider_error.get('Code')
+                    if isinstance(provider_error, dict)
+                    else None
+                )
+                raise Exception(f'{action} failed: {error_code or "provider error"}')
             return response
 
         if response_key is not None:
@@ -570,7 +850,7 @@ class TCADP(BaseVendor):
         if conversation_id:
             data["session_id"] = conversation_id
 
-        logging.info(f"[parse_document] url={doc_parse_url}, file_name={file_name}")
+        logging.info("[parse_document] starting provider document parse")
 
         timeout = aiohttp.ClientTimeout(total=120)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -580,8 +860,8 @@ class TCADP(BaseVendor):
                 data=json.dumps(data)
             ) as resp:
                 if resp.status != 200:
-                    error_text = await resp.text()
-                    logging.error(f"[parse_document] failed: status={resp.status}, body={error_text}")
+                    await resp.read()
+                    logging.error("[parse_document] failed: status=%s", resp.status)
                     yield f'data: {json.dumps({"type": "error", "payload": {"doc_id": "0", "process": 0, "status": "FAILED", "error_message": f"Parse request failed: {resp.status}"}})}\n\n'.encode('utf-8')
                     return
 
@@ -605,22 +885,27 @@ class TCADP(BaseVendor):
     }
 
     # ApplicationInterface
-    async def get_info(self) -> ApplicationInfo:
-        action = "DescribeRobotBizIDByAppKey"
-        payload = {
-            "AppKey": self.config['AppKey'],
-        }
-        resp = await tc_request(self.tc_config(), action, payload, action_overrides=self._action_overrides)
-        if 'Error' in resp['Response']:
-            logging.error(resp)
-            return ApplicationInfo(
-                ApplicationId=self.application_id,
-                Name='Unknown',
-                Greeting='Please check your AppKey/SseURL/TC_SECRET_ID/TC_SECRET_KEY',
-            )
+    async def get_info(self, *, use_trusted_app_id: bool = False) -> ApplicationInfo:
+        if use_trusted_app_id:
+            app_id = str(self.config.get('AppId') or '').strip()
+            if not app_id:
+                raise ValueError("trusted AppId is required")
+        else:
+            action = "DescribeRobotBizIDByAppKey"
+            payload = {
+                "AppKey": self.config['AppKey'],
+            }
+            resp = await tc_request(self.tc_config(), action, payload, action_overrides=self._action_overrides)
+            if 'Error' in resp['Response']:
+                logging.error("DescribeRobotBizIDByAppKey failed")
+                return ApplicationInfo(
+                    ApplicationId=self.application_id,
+                    Name='Unknown',
+                    Greeting='Please check your AppKey/SseURL/TC_SECRET_ID/TC_SECRET_KEY',
+                )
 
-        app_id = resp['Response']['BotBizId']
-        self.config['AppId'] = app_id
+            app_id = resp['Response']['BotBizId']
+            self.config['AppId'] = app_id
 
         action = "DescribeApp"
         payload = {
@@ -630,7 +915,7 @@ class TCADP(BaseVendor):
         resp = await tc_request(self.tc_config(), action, payload, action_overrides=self._action_overrides)
 
         if 'Error' in resp['Response']:
-            logging.error(resp)
+            logging.error("DescribeApp failed")
             return ApplicationInfo(
                 ApplicationId=self.application_id,
                 Name='Unknown',
@@ -681,7 +966,7 @@ class TCADP(BaseVendor):
             InputBox=InputBoxConfig(InputBoxButtons=buttons) if buttons else None,
             EnableWebSearch=web_search.get('Enabled', False) or conversation.get('EnableWebSearch', False),
             EnableAudit=False,
-            SpaceId=metadata.get('SpaceId'),
+            SpaceId=None if use_trusted_app_id else metadata.get('SpaceId'),
         )
 
     # MessageInterface - V2 Protocol
@@ -718,6 +1003,21 @@ class TCADP(BaseVendor):
                     if key not in result and value is not None:
                         result[key] = value
                 records.append(result)
+        if tagentic_config.WORKBENCH_MODE:
+            if any(
+                not isinstance(record, dict)
+                or str(record.get("ConversationId") or "") != conversation_id
+                for record in records
+            ):
+                raise WorkbenchSecureFileError(
+                    "provider history crossed the active conversation boundary",
+                    502,
+                )
+            return WorkbenchSecureFilePipeline.redact_private_urls(
+                records,
+                (),
+                self._workbench_sensitive_values(),
+            )
         return records
 
     async def get_messages_v2(
@@ -751,15 +1051,41 @@ class TCADP(BaseVendor):
             raise Exception(response['Error'])
 
         raw_messages = response.get('Messages', [])
+        if tagentic_config.WORKBENCH_MODE and any(
+            not isinstance(message, dict)
+            or str(message.get("ConversationId") or "") != conversation_id
+            for message in raw_messages
+        ):
+            raise WorkbenchSecureFileError(
+                "provider history crossed the active conversation boundary",
+                502,
+            )
         records = self._convert_messages_to_records(raw_messages, conversation_id)
 
-        return {
+        if tagentic_config.WORKBENCH_MODE and any(
+            not isinstance(record, dict)
+            or str(record.get("ConversationId") or "") != conversation_id
+            for record in records
+        ):
+            raise WorkbenchSecureFileError(
+                "provider history crossed the active conversation boundary",
+                502,
+            )
+
+        result = {
             'Records': records,
             'HasMoreBefore': response.get('HasMoreBefore', False),
             'HasMoreAfter': response.get('HasMoreAfter', False),
             'FirstRecordId': response.get('FirstRecordId', ''),
             'LastRecordId': response.get('LastRecordId', ''),
         }
+        if tagentic_config.WORKBENCH_MODE:
+            return WorkbenchSecureFilePipeline.redact_private_urls(
+                result,
+                (),
+                self._workbench_sensitive_values(),
+            )
+        return result
 
     async def describe_conversation_message_list(
         self,
@@ -805,13 +1131,20 @@ class TCADP(BaseVendor):
         raw_messages = response.get('Messages', [])
         records = self._convert_messages_to_records(raw_messages, ConversationId)
 
-        return {
+        result = {
             'Records': records,
             'HasMoreBefore': response.get('HasMoreBefore', False),
             'HasMoreAfter': response.get('HasMoreAfter', False),
             'FirstRecordId': response.get('FirstRecordId', ''),
             'LastRecordId': response.get('LastRecordId', ''),
         }
+        if tagentic_config.WORKBENCH_MODE:
+            return WorkbenchSecureFilePipeline.redact_private_urls(
+                result,
+                (),
+                self._workbench_sensitive_values(),
+            )
+        return result
 
     @staticmethod
     def _convert_messages_to_records(messages: list, conversation_id: str) -> list:
@@ -884,7 +1217,9 @@ class TCADP(BaseVendor):
         is_new_conversation: bool,
         conversation_cb: ConversationCallback,
         search_network=True,
-        custom_variables={}
+        custom_variables={},
+        agent_id: str = None,
+        workbench_evidence_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ):
         if not contents:
             contents = [{"Type": "text", "Text": ""}]
@@ -892,7 +1227,33 @@ class TCADP(BaseVendor):
             contents.append({"Type": "custom_variables", "CustomVariables": custom_variables})
 
         if is_new_conversation:
-            conversation = await conversation_cb.create()
+            if agent_id:
+                provider_app_id = str(self.config.get('AppId') or '').strip()
+                app_key = str(self.config.get('AppKey') or '').strip()
+                if not provider_app_id or not app_key or not account_id:
+                    raise ValueError("trusted conversation context is incomplete")
+                create_response = await self.forward_request(
+                    "CreateConversation",
+                    {
+                        "Type": 5,
+                        "AppId": provider_app_id,
+                        "AppKey": app_key,
+                        "UserId": account_id,
+                        "AgentId": agent_id,
+                    },
+                )
+                raw_conversation_id = create_response.get("ConversationId")
+                try:
+                    conversation_id = str(UUID(str(raw_conversation_id)))
+                except (ValueError, AttributeError, TypeError) as error:
+                    raise ValueError(
+                        "CreateConversation did not return a valid ConversationId"
+                    ) from error
+                conversation = await conversation_cb.create(
+                    vendor_conversation_id=conversation_id,
+                )
+            else:
+                conversation = await conversation_cb.create()
             yield to_event(EventType.CONVERSATION, conversation=conversation, is_new_conversation=True)
             conversation_id = str(conversation.Id)
 
@@ -909,6 +1270,16 @@ class TCADP(BaseVendor):
         # total=None：不限制整个请求生命周期，允许长时间对话。
         # sock_read：两次读操作之间的最大空闲；上游持续吐 chunk 会不断刷新。
         timeout = aiohttp.ClientTimeout(total=None, sock_read=tagentic_config.SSE_IDLE_TIMEOUT)
+        private_urls = WorkbenchSecureFilePipeline.private_urls(contents)
+        sensitive_values = self._workbench_sensitive_values()
+        stream_redactor = None
+        if tagentic_config.WORKBENCH_MODE:
+            stream_redactor = WorkbenchStreamingSecretRedactor(
+                WorkbenchSecureFilePipeline.streaming_secret_patterns(
+                    contents,
+                    sensitive_values,
+                )
+            )
         async with aiohttp.ClientSession(read_bufsize=1*1024*1024, timeout=timeout) as session:
             param = {
                 "ConversationId": conversation_id,
@@ -919,17 +1290,42 @@ class TCADP(BaseVendor):
                 "VisitorId": account_id,
                 "Stream": "enable",
             }
-            logging.info(f"[TCADP.chat] SSE param: ConversationId={conversation_id!r}, VisitorId={account_id!r}, is_new={is_new_conversation}")
+            if tagentic_config.WORKBENCH_MODE:
+                logging.info("[TCADP.chat] starting workbench SSE")
+            else:
+                logging.info(
+                    "[TCADP.chat] SSE param: ConversationId=%r, VisitorId=%r, is_new=%s",
+                    conversation_id,
+                    account_id,
+                    is_new_conversation,
+                )
             headers = {
                 "Accept": "text/event-stream",
                 "Content-Type": "application/json",
             }
 
             reply_text = ""
+            last_text_delta = None
+            redactor_finished = False
+
+            def finish_stream_redaction():
+                nonlocal redactor_finished
+                if stream_redactor is None or redactor_finished:
+                    return None, ""
+                redactor_finished = True
+                tail = stream_redactor.finish()
+                if not tail or last_text_delta is None:
+                    return None, tail
+                projected = dict(last_text_delta)
+                projected["Text"] = tail
+                return (
+                    f'data: {custom_dumps(projected)}\n\n'.encode('utf-8'),
+                    tail,
+                )
 
             async with session.post(self.tc_config()['sse'], headers=headers, data=json.dumps(param)) as resp:
                 if resp.status != 200:
-                    logging.error(f"Failed to chat: {resp}")
+                    logging.error("[TCADP.chat] upstream SSE failed: status=%s", resp.status)
                     error_info = ErrorInfo(
                         Code=resp.status,
                         Message=f"SSE error: {resp.status}",
@@ -952,14 +1348,41 @@ class TCADP(BaseVendor):
                             except json.JSONDecodeError:
                                 continue
                             event_type = data.get('Type', '')
+                            if (
+                                tagentic_config.WORKBENCH_MODE
+                                and event_type == EventType.RESPONSE_COMPLETED.value
+                                and workbench_evidence_callback is not None
+                            ):
+                                # Encrypt the provider object before browser projection.
+                                # Evidence persistence is fail-closed in workbench mode.
+                                await workbench_evidence_callback(dict(data))
+                            if tagentic_config.WORKBENCH_MODE:
+                                data = WorkbenchSecureFilePipeline.redact_private_urls(
+                                    data,
+                                    private_urls,
+                                    sensitive_values,
+                                )
 
                             # Collect reply text for title generation
                             if event_type == 'text.delta':
-                                reply_text += data.get('Text', '')
+                                text_delta = data.get('Text', '')
+                                if stream_redactor is not None:
+                                    last_text_delta = dict(data)
+                                    text_delta = stream_redactor.feed(text_delta)
+                                    data['Text'] = text_delta
+                                reply_text += text_delta
+                                if not text_delta:
+                                    continue
                             # Forward V2 event directly
                             yield f'data: {custom_dumps(data)}\n\n'.encode('utf-8')
 
+                    final_delta, tail = finish_stream_redaction()
+                    if final_delta is not None:
+                        reply_text += tail
+                        yield final_delta
+
                 except (asyncio.CancelledError, GeneratorExit):
+                    finish_stream_redaction()
                     logging.info("forward_request: client disconnected, closing upstream SSE connection")
                     # 强制关闭底层 TCP socket，确保上游立即收到 RST
                     if resp.connection and resp.connection.transport:
@@ -968,13 +1391,26 @@ class TCADP(BaseVendor):
                     await session.close()
                     raise
                 except asyncio.TimeoutError:
+                    final_delta, tail = finish_stream_redaction()
+                    if final_delta is not None:
+                        reply_text += tail
+                        yield final_delta
                     # aiohttp sock_read idle 超时：上游 SSE 在 SSE_IDLE_TIMEOUT 秒内
                     # 未再推送任何数据。给前端一个明确 error 事件，避免"响应静默中断"。
                     idle_sec = tagentic_config.SSE_IDLE_TIMEOUT
-                    logging.warning(
-                        f"[TCADP.chat] upstream SSE idle timeout after {idle_sec}s "
-                        f"(ConversationId={conversation_id!r}, VisitorId={account_id!r})"
-                    )
+                    if tagentic_config.WORKBENCH_MODE:
+                        logging.warning(
+                            "[TCADP.chat] workbench upstream SSE idle timeout after %ss",
+                            idle_sec,
+                        )
+                    else:
+                        logging.warning(
+                            "[TCADP.chat] upstream SSE idle timeout after %ss "
+                            "(ConversationId=%r, VisitorId=%r)",
+                            idle_sec,
+                            conversation_id,
+                            account_id,
+                        )
                     # 主动关闭上游连接，回收资源
                     try:
                         if resp.connection and resp.connection.transport:
@@ -990,6 +1426,8 @@ class TCADP(BaseVendor):
                         ),
                     )
                     return
+                finally:
+                    finish_stream_redaction()
 
             logging.info("forward_request: done")
 
@@ -1009,10 +1447,24 @@ class TCADP(BaseVendor):
             conversation = await conversation_cb.update(conversation_id=conversation_id, title=summarize)
             yield to_event(EventType.CONVERSATION, conversation=conversation, is_new_conversation=False)
         except Exception as e:
-            logging.error(f'failed to summarize conversation title. error: {e}')
+            if tagentic_config.WORKBENCH_MODE:
+                logging.error(
+                    "failed to update workbench conversation title: error_type=%s",
+                    type(e).__name__,
+                )
+            else:
+                logging.error('failed to summarize conversation title: %s', e)
 
     # FilesystemInterface:
-    async def list_dir(self, app_id: str, path: str, depth: int = 1, workspace_id = "") -> dict:
+    async def list_dir(
+        self,
+        app_id: str,
+        path: str,
+        depth: int = 1,
+        workspace_id: str = "",
+        *,
+        user_id: str | None = None,
+    ) -> dict:
         """调用 CreateWorkspaceCredential 获取凭证后，再请求 ListDir 接口获取目录列表
 
         Args:
@@ -1027,29 +1479,17 @@ class TCADP(BaseVendor):
             Exception: 当凭证获取或 ListDir 请求失败时抛出
         """
         # Step 1: 通过通用转发协议调用 CreateWorkspaceCredential 获取凭证
-        credential_payload = {
-            "AppId": app_id,
-            "Type": 2,
-            "WorkspaceId": workspace_id
-        }
+        credential_payload = self._workspace_credential_payload(
+            app_id=app_id,
+            workspace_id=workspace_id,
+            user_id=user_id,
+        )
         credential_resp = await self.forward_request(
             action="CreateWorkspaceCredential",
             payload=credential_payload,
         )        
-        logging.info(f'credential_resp: {credential_resp}')
-        # 解析凭证信息
-        credential = credential_resp.get('Credential', {})
-        sandbox_storage = credential_resp.get('SandboxStorage', {})
-
-        access_token = credential.get('AccessToken', '')
-        domain = sandbox_storage.get('Domain', '')
-        token_tag = sandbox_storage.get('TokenTag', '')
-
-        if not access_token or not domain or not token_tag:
-            raise Exception(
-                f'CreateWorkspaceCredential 返回数据不完整: '
-                f'AccessToken={bool(access_token)}, Domain={domain}, TokenTag={token_tag}'
-            )
+        logging.info('CreateWorkspaceCredential response received')
+        domain, token_tag, access_token = self._workspace_credential(credential_resp)
 
         # Step 2: 使用 Domain + TokenTag + AccessToken 拼接调用 ListDir
         url = f"{domain}/filesystem.Filesystem/ListDir"
@@ -1059,22 +1499,31 @@ class TCADP(BaseVendor):
         }
         payload = {"path": path, "depth": depth}
 
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=30, connect=5, sock_read=20)
+        session = await self._workspace_session(domain, timeout)
+        async with session:
             async with session.post(
                 url,
                 json=payload,
                 headers=headers,
-                ssl=False,
+                allow_redirects=False,
             ) as resp:
-                data = await resp.json()
+                if resp.content_length is not None and resp.content_length > 1024 * 1024:
+                    raise ValueError("provider workspace directory response is too large")
+                raw = await self._read_bounded(
+                    resp.content,
+                    1024 * 1024,
+                    "provider workspace directory response is too large",
+                )
+                try:
+                    data = json.loads(raw)
+                except (TypeError, ValueError, UnicodeDecodeError) as error:
+                    raise ValueError(
+                        "provider workspace directory response is invalid"
+                    ) from error
                 if resp.status != 200:
-                    logging.error(
-                        f'[TCADP.list_dir] path={path} status={resp.status} resp={data}'
-                    )
-                    raise Exception(
-                        f'ListDir failed: status={resp.status}, '
-                        f'code={data.get("code")}, message={data.get("message")}'
-                    )
+                    logging.error('[TCADP.list_dir] status=%s', resp.status)
+                    raise Exception(f'ListDir failed: status={resp.status}')
                 return data
 
     async def fetch_file(self, app_id: str, workspace_id: str, path: str) -> dict:
@@ -1095,31 +1544,21 @@ class TCADP(BaseVendor):
         Raises:
             Exception: 当请求失败时抛出
         """
+        if tagentic_config.WORKBENCH_MODE:
+            raise ValueError("legacy signed-URL file fetch is disabled in workbench mode")
+
         # Step 1: 获取凭证
-        credential_payload = {
-            "AppId": app_id,
-            "Type": 2,
-            "WorkspaceId": workspace_id
-        }
+        credential_payload = self._workspace_credential_payload(
+            app_id=app_id,
+            workspace_id=workspace_id,
+        )
         credential_resp = await self.forward_request(
             action="CreateWorkspaceCredential",
             payload=credential_payload,
         )
-        logging.info(f'[fetch_file] credential_resp: {credential_resp}')
+        logging.info('[fetch_file] workspace credential received')
 
-        # 解析凭证信息
-        credential = credential_resp.get('Credential', {})
-        sandbox_storage = credential_resp.get('SandboxStorage', {})
-
-        access_token = credential.get('AccessToken', '')
-        domain = sandbox_storage.get('Domain', '')
-        token_tag = sandbox_storage.get('TokenTag', '')
-
-        if not access_token or not domain or not token_tag:
-            raise Exception(
-                f'CreateWorkspaceCredential 返回数据不完整: '
-                f'AccessToken={bool(access_token)}, Domain={domain}, TokenTag={token_tag}'
-            )
+        domain, token_tag, access_token = self._workspace_credential(credential_resp)
 
         # Step 2: 使用 Domain + TokenTag + AccessToken 调用 GET {domain}/files?path=<path>
         url = f"{domain}/files"
@@ -1130,23 +1569,30 @@ class TCADP(BaseVendor):
             token_tag: access_token,
         }
 
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=120, connect=5, sock_read=30)
+        session = await self._workspace_session(domain, timeout)
+        async with session:
             async with session.get(
                 url,
                 params=params,
                 headers=headers,
-                ssl=False,
+                allow_redirects=False,
             ) as resp:
                 content_type = resp.headers.get('Content-Type', '')
-                content = await resp.read()  # 使用 read() 获取原始字节
                 if resp.status != 200:
-                    text = content.decode('utf-8', errors='replace')[:200]
-                    logging.error(
-                        f'[TCADP.fetch_file] path={path} status={resp.status} resp={text}'
-                    )
-                    raise Exception(
-                        f'fetch_file failed: status={resp.status}, content={text}'
-                    )
+                    logging.error('[TCADP.fetch_file] status=%s', resp.status)
+                    raise Exception(f'fetch_file failed: status={resp.status}')
+                max_fetch_bytes = 50 * 1024 * 1024
+                if (
+                    resp.content_length is not None
+                    and resp.content_length > max_fetch_bytes
+                ):
+                    raise FileSizeLimitExceeded("provider file exceeds the fetch limit")
+                content = await self._read_bounded(
+                    resp.content,
+                    max_fetch_bytes,
+                    "provider file exceeds the fetch limit",
+                )
 
                 # Step 3: 上传到 COS，路径为 app_id/path
                 cos_key = f"{app_id}/{path}"  # 如 2059173834404121408/workdir/main.py
@@ -1163,17 +1609,16 @@ class TCADP(BaseVendor):
                         path=cos_key,
                         if_changed=True,
                     )
-                    logging.info(f'[TCADP.fetch_file] uploaded to COS: {cos_key}')
+                    logging.info('[TCADP.fetch_file] uploaded to COS')
                     # 生成预签名下载链接
                     download_url = get_presigned_download_url(key=cos_key)
-                    logging.info(f'[TCADP.fetch_file] download URL: {download_url}')
                     # 生成预览链接（通过 CI 服务获取 WebOffice 预览地址）
                     preview_url = get_presigned_preview_url(key=cos_key)
-                    logging.info(f'[TCADP.fetch_file] preview URL: {preview_url}')
                 except Exception as e:
-                    import traceback
-                    logging.error(f'[TCADP.fetch_file] upload to COS failed: type={type(e).__name__}, error={e}')
-                    logging.error(f'[TCADP.fetch_file] traceback: {traceback.format_exc()}')
+                    logging.error(
+                        '[TCADP.fetch_file] upload to COS failed: error_type=%s',
+                        type(e).__name__,
+                    )
 
                 return {
                     "status_code": resp.status,
@@ -1182,81 +1627,119 @@ class TCADP(BaseVendor):
                     "preview_url": preview_url,
                 }
 
-    async def download_file_content(self, app_id: str, workspace_id: str, path: str) -> tuple:
-        """从工作空间下载文件原始内容（不经过 COS 转存）
+    async def open_file_stream(
+        self,
+        app_id: str,
+        workspace_id: str,
+        path: str,
+        *,
+        max_bytes: int | None = None,
+        user_id: str | None = None,
+        timeout_seconds: int | None = None,
+    ) -> ProviderFileStream:
+        """Open a bounded provider response without buffering its body."""
 
-        用于后端代理下载场景：后端直接返回文件内容给前端，避免 COS 跨域问题。
-
-        Args:
-            app_id: 应用 ID
-            workspace_id: 工作空间 ID
-            path: 文件路径，如 /workdir/main.py
-
-        Returns:
-            tuple: (content_bytes, content_type, file_name)
-                - content_bytes: 文件原始字节
-                - content_type: MIME 类型
-                - file_name: 文件名
-
-        Raises:
-            Exception: 当请求失败时抛出
-        """
-        # Step 1: 获取凭证
-        credential_payload = {
-            "AppId": app_id,
-            "Type": 2,
-            "WorkspaceId": workspace_id
-        }
+        credential_payload = self._workspace_credential_payload(
+            app_id=app_id,
+            workspace_id=workspace_id,
+            user_id=user_id,
+        )
         credential_resp = await self.forward_request(
             action="CreateWorkspaceCredential",
             payload=credential_payload,
         )
-        logging.info(f'[download_file_content] credential_resp received')
+        logging.info('[open_file_stream] workspace credential received')
 
-        # 解析凭证信息
-        credential = credential_resp.get('Credential', {})
-        sandbox_storage = credential_resp.get('SandboxStorage', {})
+        domain, token_tag, access_token = self._workspace_credential(credential_resp)
+        effective_max_bytes = int(
+            50 * 1024 * 1024 if max_bytes is None else max_bytes
+        )
+        if effective_max_bytes < 1 or effective_max_bytes > 1024 * 1024 * 1024:
+            raise ValueError("file download limit is invalid")
+        effective_timeout_seconds = min(
+            120,
+            int(120 if timeout_seconds is None else timeout_seconds),
+        )
+        if effective_timeout_seconds < 1:
+            raise ValueError("file download timeout is invalid")
 
-        access_token = credential.get('AccessToken', '')
-        domain = sandbox_storage.get('Domain', '')
-        token_tag = sandbox_storage.get('TokenTag', '')
-
-        if not access_token or not domain or not token_tag:
-            raise Exception(
-                f'CreateWorkspaceCredential 返回数据不完整: '
-                f'AccessToken={bool(access_token)}, Domain={domain}, TokenTag={token_tag}'
-            )
-
-        # Step 2: 下载文件
         url = f"{domain}/files"
         params = {"path": path}
         headers = {token_tag: access_token}
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
+        timeout = aiohttp.ClientTimeout(
+            total=effective_timeout_seconds,
+            connect=min(5, effective_timeout_seconds),
+            sock_read=min(30, effective_timeout_seconds),
+        )
+        session = await self._workspace_session(domain, timeout)
+        try:
+            response = await session.get(
                 url,
                 params=params,
                 headers=headers,
-                ssl=False,
-            ) as resp:
-                content_type = resp.headers.get('Content-Type', 'application/octet-stream')
-                content = await resp.read()
-                if resp.status != 200:
-                    text = content.decode('utf-8', errors='replace')[:200]
-                    logging.error(
-                        f'[TCADP.download_file_content] path={path} status={resp.status} resp={text}'
-                    )
-                    raise Exception(
-                        f'download_file_content failed: status={resp.status}, content={text}'
-                    )
+                allow_redirects=False,
+            )
+            content_type = response.headers.get(
+                'Content-Type', 'application/octet-stream'
+            )
+            if response.status != 200:
+                logging.error('[TCADP.open_file_stream] status=%s', response.status)
+                raise Exception(f'provider file download failed: status={response.status}')
+            if (
+                response.content_length is not None
+                and response.content_length > effective_max_bytes
+            ):
+                raise FileSizeLimitExceeded("provider file exceeds the download limit")
+            if (
+                not isinstance(content_type, str)
+                or len(content_type) > 255
+                or "\r" in content_type
+                or "\n" in content_type
+            ):
+                content_type = "application/octet-stream"
+            file_name = path.rsplit('/', 1)[-1] if '/' in path else path
+            return ProviderFileStream(
+                session=session,
+                response=response,
+                max_bytes=effective_max_bytes,
+                content_type=content_type,
+                file_name=file_name,
+            )
+        except Exception:
+            await session.close()
+            raise
 
-                # 从路径中提取文件名
-                file_name = path.rsplit('/', 1)[-1] if '/' in path else path
-                logging.info(
-                    f'[TCADP.download_file_content] path={path} size={len(content)} '
-                    f'content_type={content_type}'
-                )
-                return content, content_type, file_name
+    async def download_file_content(
+        self,
+        app_id: str,
+        workspace_id: str,
+        path: str,
+        *,
+        max_bytes: int | None = None,
+        user_id: str | None = None,
+        timeout_seconds: int | None = None,
+    ) -> tuple:
+        """Compatibility helper for legacy callers that still need a byte tuple."""
+
+        if tagentic_config.WORKBENCH_MODE:
+            raise ValueError("buffered file download is disabled in workbench mode")
+
+        stream = await self.open_file_stream(
+            app_id=app_id,
+            workspace_id=workspace_id,
+            path=path,
+            max_bytes=max_bytes,
+            user_id=user_id,
+            timeout_seconds=timeout_seconds,
+        )
+        chunks = []
+        try:
+            async for chunk in stream.iter_chunks():
+                chunks.append(chunk)
+            return b"".join(chunks), stream.content_type, stream.file_name
+        finally:
+            await stream.close()
 
     @staticmethod
     def _resolve_file_type(mime_type: str) -> str:
@@ -1289,7 +1772,39 @@ class TCADP(BaseVendor):
         return mime_type.split('/')[-1]
 
     # FileInterface:
-    async def upload(self, db: AsyncSession, request: Request, account_id: str, mime_type: str, mode: str = 'standard') -> str:
+    async def upload(
+        self,
+        db: AsyncSession,
+        request: Request,
+        account_id: str,
+        mime_type: str,
+        mode: str = 'standard',
+        max_file_bytes: int | None = None,
+    ) -> str:
+        if mode == 'claw' and tagentic_config.WORKBENCH_MODE:
+            raise ValueError(
+                "workbench uploads must use the private scanned file pipeline"
+            )
+        file_data = None
+        if max_file_bytes is not None:
+            declared_size = request.headers.get("Content-Length")
+            if declared_size:
+                try:
+                    parsed_size = int(declared_size)
+                except ValueError as error:
+                    raise FileSizeLimitExceeded("invalid Content-Length") from error
+                if parsed_size < 0 or parsed_size > max_file_bytes:
+                    raise FileSizeLimitExceeded("file exceeds max_file_bytes")
+
+            file_data = bytearray()
+            while True:
+                body = await request.stream.read()
+                if body is None:
+                    break
+                file_data += body
+                if len(file_data) > max_file_bytes:
+                    raise FileSizeLimitExceeded("file exceeds max_file_bytes")
+
         action = "DescribeStorageCredential"
         file_type = self._resolve_file_type(mime_type)
 
@@ -1312,15 +1827,20 @@ class TCADP(BaseVendor):
             resp = await tc_request(self.tc_config(), action, payload, action_overrides=self._action_overrides)
         resp = resp['Response']
         if 'Error' in resp:
-            logging.error(resp)
-            raise Exception(resp['Error']['Message'])
+            provider_error = resp.get('Error') if isinstance(resp.get('Error'), dict) else {}
+            error_code = provider_error.get('Code') or 'ProviderError'
+            logging.error('DescribeStorageCredential failed: code=%s', error_code)
+            raise Exception(f'DescribeStorageCredential failed: {error_code}')
 
         logging.info(f"DescribeStorageCredential mode={mode}, response keys: {[k for k in resp.keys() if k != 'Credentials']}")
 
         # 新协议将路径信息放在 StoragePath 子对象中，需要展平到 resp 顶层以保持后续逻辑一致
         if 'StoragePath' in resp:
             storage_path = resp['StoragePath']
-            logging.info(f"DescribeStorageCredential StoragePath type={type(storage_path).__name__}, value={storage_path}")
+            logging.info(
+                "DescribeStorageCredential StoragePath type=%s",
+                type(storage_path).__name__,
+            )
             if isinstance(storage_path, dict):
                 for key in ('FilePath', 'FileUrl', 'ImagePath', 'UploadPath', 'UploadUrl', 'DownloadUrl'):
                     if key in storage_path and key not in resp:
@@ -1330,15 +1850,22 @@ class TCADP(BaseVendor):
                 if 'UploadPath' not in resp:
                     resp['UploadPath'] = storage_path
 
-        logging.info(f"DescribeStorageCredential UploadPath: {resp.get('UploadPath')}, FileUrl: {resp.get('FileUrl')}, UploadUrl: {resp.get('UploadUrl')}, DownloadUrl: {resp.get('DownloadUrl')}")
+        logging.info(
+            "DescribeStorageCredential returned path=%s file_url=%s upload_url=%s download_url=%s",
+            bool(resp.get('UploadPath')),
+            bool(resp.get('FileUrl')),
+            bool(resp.get('UploadUrl')),
+            bool(resp.get('DownloadUrl')),
+        )
 
         # 读取完整请求体
-        file_data = bytearray()
-        while True:
-            body = await request.stream.read()
-            if body is None:
-                break
-            file_data += body
+        if file_data is None:
+            file_data = bytearray()
+            while True:
+                body = await request.stream.read()
+                if body is None:
+                    break
+                file_data += body
 
         logging.info(f"upload: file size {len(file_data)} bytes")
 
@@ -1378,8 +1905,8 @@ class TCADP(BaseVendor):
                     headers=put_headers,
                 ) as put_resp:
                     if put_resp.status not in (200, 201, 204):
-                        text = await put_resp.text()
-                        logging.error(f"upload PUT failed: status={put_resp.status}, body={text}")
+                        await put_resp.read()
+                        logging.error("upload PUT failed: status=%s", put_resp.status)
                         raise Exception(f"File upload failed: {put_resp.status}")
         else:
             # 回退到 S3 SDK 简单上传
@@ -1417,17 +1944,21 @@ class TCADP(BaseVendor):
                 dl_storage = dl_resp.get('StoragePath', {})
                 download_url = dl_resp.get('DownloadUrl') or dl_storage.get('FileUrl') or dl_resp.get('FileUrl') or dl_resp.get('file_url')
                 if download_url:
-                    logging.info(f"claw mode DownloadUrl obtained: {download_url[:80]}...")
+                    logging.info("claw mode DownloadUrl obtained")
                     url = download_url
                 else:
                     logging.warning(f"claw mode: DownloadUrl not found in response, keys: {list(dl_resp.keys())}")
             except Exception as e:
-                logging.warning(f"claw mode: failed to get DownloadUrl, using FileUrl. Error: {e}")
+                logging.warning(
+                    "claw mode: failed to get DownloadUrl, using FileUrl; error_type=%s",
+                    type(e).__name__,
+                )
 
         return {
             'Url': url,
             'CosUrl': cos_url,
             'CosBucket': resp.get('Bucket', ''),
+            'Size': len(file_data),
         }
 
     # FeedbackInterface
@@ -1471,7 +2002,7 @@ class TCADP(BaseVendor):
 
         action = "DescribeRefer"
         payload = {
-            "BotBizId": self.config.get('AppId', ''),
+            "BotBizId": self.config.get('AppId') or self.config.get('BotBizId', ''),
             "ReferBizIds": unique_reference_ids,
         }
         resp = await tc_request(self.tc_config(), action, payload, action_overrides=self._action_overrides)
@@ -1520,8 +2051,8 @@ class TCADP(BaseVendor):
         # ChinaTencentADP 模式使用独立的 ADP 密钥
         if service_config_key == 'ChinaTencentADP':
             from config import tagentic_config
-            adp_secret_id = tagentic_config.ADP_SECRET_ID
-            adp_secret_key = tagentic_config.ADP_SECRET_KEY
+            adp_secret_id = self.config.get('SecretId') or tagentic_config.ADP_SECRET_ID
+            adp_secret_key = self.config.get('SecretKey') or tagentic_config.ADP_SECRET_KEY
             if adp_secret_id and adp_secret_key:
                 config['secret_id'] = adp_secret_id
                 config['secret_key'] = adp_secret_key

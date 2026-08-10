@@ -4,7 +4,7 @@
         <div class="panel-header">
             <div class="header-left">
                 <!-- 收起菜单 + 新建对话：对齐主区 header（定时任务面板遮住了主区 header，故在此补齐同款入口） -->
-                <SidebarToggle :theme="theme" @toggle="emit('toggle-sidebar')" />
+                <SidebarToggle :theme="theme" :language="language" @toggle="emit('toggle-sidebar')" />
                 <CreateConversation
                     :tooltip-text="createConversationText || undefined"
                     :theme="theme"

@@ -27,8 +27,9 @@ def autodiscover(app, module_names: list[ModuleType], recursive: bool = False):
             for path in glob(f"{base}/**/*.py", recursive=True):
                 if path not in _imported:
                     name = "module"
-                    if "__init__" in path:
-                        *_, name, __ = path.split("/")
+                    path_obj = Path(path)
+                    if path_obj.name == "__init__.py":
+                        name = path_obj.parent.name
                     spec = util.spec_from_file_location(name, path)
                     specmod = util.module_from_spec(spec)
                     _imported.add(path)

@@ -8,6 +8,13 @@ from sanic_restful_api import reqparse
 from sanic.request.types import Request
 from sanic.exceptions import SanicException
 
+from config import tagentic_config
+from core.workbench_action_policy import (
+    WorkbenchActionPolicy,
+    WorkbenchActionPolicyError,
+)
+from core.workbench_policy import WorkbenchPolicy, WorkbenchPolicyError
+from core.workbench_metrics import WORKBENCH_METRICS
 from router import login_required
 from app_factory import TAgenticApp
 
@@ -63,10 +70,56 @@ class ForwardApi(HTTPMethodView):
     async def post(self, request: Request, action: str):
         # 校验 Action 名称格式，防止注入
         if not ACTION_PATTERN.match(action):
+            if tagentic_config.WORKBENCH_MODE:
+                WORKBENCH_METRICS.record_action_denied(action)
             raise SanicException(
                 f'Invalid Action name: {action}',
                 status_code=400
             )
+
+        if tagentic_config.WORKBENCH_MODE:
+            context = request.ctx.workbench_context
+            try:
+                WorkbenchPolicy.validate_action(
+                    action,
+                    context,
+                    request.ctx.workbench_app_context,
+                )
+                vendor_app = app.get_vendor_app(context.application_id)
+                prepared = await WorkbenchActionPolicy.prepare(
+                    request.ctx.db,
+                    action=action,
+                    request_body=request.json,
+                    account_id=request.ctx.account_id,
+                    identity=context,
+                    vendor_app=vendor_app,
+                    app_context=request.ctx.workbench_app_context,
+                )
+                if prepared.local_response is not None:
+                    response = prepared.local_response
+                else:
+                    response = await vendor_app.forward_request(
+                        action,
+                        prepared.payload,
+                        raise_on_error=False,
+                        variables={
+                            'APP_KEY': vendor_app.config.get('AppKey', ''),
+                            'ACCOUNT_ID': context.canonical_subject,
+                            'ApplicationId': context.application_id,
+                            'AppId': vendor_app.config.get('AppId', ''),
+                        },
+                    )
+                projected = await WorkbenchActionPolicy.project_response(
+                    request.ctx.db,
+                    prepared=prepared,
+                    account_id=request.ctx.account_id,
+                    response=response,
+                )
+            except (WorkbenchActionPolicyError, WorkbenchPolicyError) as error:
+                if error.status_code < 500:
+                    WORKBENCH_METRICS.record_action_denied(action)
+                raise SanicException(str(error), status_code=error.status_code) from error
+            return sanic.json({"Response": projected})
 
         parser = reqparse.RequestParser()
         parser.add_argument("ApplicationId", type=str, required=True, location="json")

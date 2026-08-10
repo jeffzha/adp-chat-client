@@ -24,6 +24,12 @@ export interface Props extends ChatRelatedProps {
     size?: string;
     /** 当前应用名称 */
     currentApplicationName?: string;
+    /** Trusted server-side status error displayed above conversation history. */
+    statusError?: string;
+    /** Accessible, localized durable Turn lifecycle status. */
+    turnStatusMessage?: string;
+    /** Visual severity for the durable Turn status. */
+    turnStatusTone?: 'info' | 'success' | 'warning' | 'error';
     /** 当前应用欢迎语 */
     currentApplicationGreeting?: string;
     /** 当前应用推荐问题列表 */
@@ -83,6 +89,9 @@ const props = withDefaults(defineProps<Props>(), {
     size: 'small',
     currentApplicationAvatar: '',
     currentApplicationName: '',
+    statusError: '',
+    turnStatusMessage: '',
+    turnStatusTone: 'info',
     currentApplicationGreeting: '',
     currentApplicationOpeningQuestions: () => [],
     currentApplicationId: '',
@@ -217,8 +226,8 @@ defineExpose({
     <TLayout class="main-layout" :class="{ isMobile: isMobile }">
         <THeader class="layout-header">
             <div class="header-app-container">
-                    <SidebarToggle :theme="theme"  @toggle="handleToggleSidebar" />
-                    <CreateConversation :tooltipText="createConversationText" :theme="theme" :language="language" @create="handleCreateConversation" />
+                    <SidebarToggle :theme="theme" :language="language" @toggle="handleToggleSidebar" />
+                    <CreateConversation v-if="!readOnly" :tooltipText="createConversationText" :theme="theme" :language="language" @create="handleCreateConversation" />
                     <TAvatar :imageProps="{
                             lazy: true,
                             loading: ''
@@ -232,6 +241,17 @@ defineExpose({
             </div>
         </THeader>
         <TContent class="layout-content">
+            <div v-if="statusError" class="layout-status-error" role="alert">{{ statusError }}</div>
+            <div
+                v-if="turnStatusMessage"
+                class="layout-turn-status"
+                :class="`is-${turnStatusTone}`"
+                :role="turnStatusTone === 'error' ? 'alert' : 'status'"
+                :aria-live="turnStatusTone === 'error' ? 'assertive' : 'polite'"
+            >
+                <span class="layout-turn-status__indicator" aria-hidden="true" />
+                <span>{{ turnStatusMessage }}</span>
+            </div>
             <Chat
                 ref="chatRef"
                 :chatId="chatId"
@@ -246,6 +266,7 @@ defineExpose({
                 :theme="theme"
                 :language="props.language"
                 :mode="props.mode"
+                :readOnly="props.readOnly"
                 :i18n="i18n"
                 :chatItemI18n="chatItemI18n"
                 :senderI18n="senderI18n"
@@ -343,6 +364,52 @@ defineExpose({
 .layout-content {
     flex: 1;
     overflow: auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.layout-content > .chat-box {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+}
+.layout-status-error {
+    flex: 0 0 auto;
+    margin: 8px 16px 0;
+    border: 1px solid var(--td-error-color-4, #e34d59);
+    border-radius: var(--td-radius-medium, 6px);
+    background: var(--td-error-color-1, #fff0ed);
+    color: var(--td-error-color-7, #b11f26);
+    padding: 10px 12px;
+    overflow-wrap: anywhere;
+}
+
+.layout-turn-status {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 16px 0;
+    border-radius: var(--td-radius-medium, 6px);
+    background: var(--td-bg-color-secondarycontainer, #f3f3f3);
+    color: var(--td-text-color-secondary, #646a73);
+    padding: 8px 12px;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+.layout-turn-status__indicator { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--td-brand-color, #0052d9); }
+.layout-turn-status.is-success { color: var(--td-success-color-7, #237804); background: var(--td-success-color-1, #edf9f0); }
+.layout-turn-status.is-success .layout-turn-status__indicator { background: var(--td-success-color, #2ba471); }
+.layout-turn-status.is-warning { color: var(--td-warning-color-8, #8a5a00); background: var(--td-warning-color-1, #fff3d6); }
+.layout-turn-status.is-warning .layout-turn-status__indicator { background: var(--td-warning-color, #e37318); }
+.layout-turn-status.is-error { color: var(--td-error-color-7, #b11f26); background: var(--td-error-color-1, #fff0ed); }
+.layout-turn-status.is-error .layout-turn-status__indicator { background: var(--td-error-color, #d54941); }
+
+@media (max-width: 720px) {
+    .layout-status-error,
+    .layout-turn-status { margin: 6px 10px 0; padding: 7px 10px; }
+    .layout-header { min-width: 0; }
+    .header-app-container { min-width: 0; overflow: hidden; }
 }
 
 .layout-footer {

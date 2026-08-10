@@ -173,14 +173,14 @@ def upload(
 
     if not if_changed:
         # 不做比较，直接上传
-        logger.info(f'[COS] if_changed=False，直接上传: {path}')
+        logger.info('[COS] if_changed=False, uploading object')
         client.put_object(
             Bucket=bucket,
             Body=stream,
             Key=path,
             EnableMD5=False,
         )
-        logger.info(f'[COS] 上传成功: {path}')
+        logger.info('[COS] upload succeeded')
         return path
 
     # 1. 计算本地文件流的 MD5
@@ -201,7 +201,7 @@ def upload(
 
     # 3. 若文件已存在，获取 COS 文件的 MD5 并比较
     if cos_file_exists:
-        logger.info(f'[COS] 文件已存在: {path}，开始比较 MD5...')
+        logger.info('[COS] object exists, comparing MD5')
         try:
             hash_response = client.file_hash(
                 Bucket=bucket,
@@ -215,12 +215,12 @@ def upload(
             cos_md5 = ''
 
         if cos_md5 and cos_md5.lower() == local_md5.lower():
-            logger.info(f'[COS] MD5 相同，跳过上传: {path}')
+            logger.info('[COS] MD5 matches, skipping upload')
             return path
 
         logger.info(f'[COS] MD5 不同（本地: {local_md5}，COS: {cos_md5}），覆盖上传...')
     else:
-        logger.info(f'[COS] 文件不存在: {path}，开始上传...')
+        logger.info('[COS] object does not exist, uploading')
 
     # 4. 执行上传
     client.put_object(
@@ -229,7 +229,7 @@ def upload(
         Key=path,
         EnableMD5=False,
     )
-    logger.info(f'[COS] 上传成功: {path}')
+    logger.info('[COS] upload succeeded')
     return path
 
 
@@ -270,7 +270,7 @@ def upload_to_cos(
 
     client.put_object(**kwargs)
     cos_url = f"https://{bucket}.cos.{region}.myqcloud.com/{key}"
-    logger.info(f'[COS] upload_to_cos 上传成功: {cos_url}')
+    logger.info('[COS] upload_to_cos succeeded')
     return cos_url
 
 
@@ -306,7 +306,7 @@ def get_presigned_download_url(
         Expired=expired,
         SignHost=sign_host,
     )
-    logger.info(f"[COS] 生成预签名下载 URL: key={key}, expired={expired}s")
+    logger.info("[COS] generated presigned download URL: expired=%ss", expired)
     return url
 
 
@@ -362,7 +362,11 @@ def get_presigned_preview_url(
         kwargs["UseCiEndPoint"] = True
 
     url = client.get_presigned_download_url(**kwargs)
-    logger.info(f"[COS] 生成预签名预览 URL: key={key}, expired={expired}s, ci={use_ci_endpoint}")
+    logger.info(
+        "[COS] generated presigned preview URL: expired=%ss ci=%s",
+        expired,
+        use_ci_endpoint,
+    )
 
     # 请求预签名 URL，从 CI 服务获取 WebOffice 预览地址
     resp = requests.get(url, timeout=30)
@@ -373,5 +377,5 @@ def get_presigned_preview_url(
         logger.error(f"[COS] CI 响应中未包含 PreviewUrl: {data}")
         raise ValueError("CI 服务未返回 PreviewUrl")
 
-    logger.info(f"[COS] 获取到预览地址: {preview_url[:100]}...")
+    logger.info("[COS] received preview URL")
     return preview_url

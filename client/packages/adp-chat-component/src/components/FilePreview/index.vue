@@ -77,6 +77,7 @@ import HtmlPreview from './HtmlPreview.vue';
 import MarkdownPreview from './MarkdownPreview.vue';
 import CodePreview from './CodePreview.vue';
 import { getFileDownloadUrl } from '../../service/api';
+import { isWorkbenchMode } from '../../service/workbenchMode';
 import type { FilePreviewProps } from '../../model/file-preview';
 
 /** 文档类扩展名集合 */
@@ -155,7 +156,13 @@ const emit = defineEmits<{
 }>();
 
 /** 当前文件对应的预览类型 */
-const previewType = computed(() => resolvePreviewType(props.filePath || props.fileName || props.fileUrl));
+const previewType = computed(() => {
+    const detected = resolvePreviewType(props.filePath || props.fileName || props.fileUrl);
+    // The legacy Office preview API returns a signed COS URL to browser code.
+    // Workbench mode keeps that locator server-side and offers authorized
+    // download instead, so rich document preview must remain unavailable.
+    return isWorkbenchMode() && detected === 'doc' ? null : detected;
+});
 
 /** DocPreview 子组件引用，用于透传 expose 方法 */
 const docPreviewRef = ref<InstanceType<typeof DocPreview> | null>(null);

@@ -3,6 +3,7 @@ import router from '@/router'
 import { logout } from '@/service/login';
 import { getBaseURL } from '@/utils/url';
 import { useUiStore } from '@/stores/ui';
+import { setWorkbenchSessionError, workbenchRuntime } from '@/workbench/runtime';
 
 // 创建axios实例
 const instance = axios.create({
@@ -66,7 +67,12 @@ instance.interceptors.response.use(
     }
     console.log('[error] axio',error)
     if (error.response && error.response.status === 401) {
-      logout(() => router.replace({ name: 'login' }));
+      if (workbenchRuntime.enabled) {
+        setWorkbenchSessionError('The workbench session is unavailable or has expired.');
+        router.replace({ name: 'workbench-unavailable' });
+      } else {
+        logout(() => router.replace({ name: 'login' }));
+      }
     }
     return Promise.reject(error)
   },

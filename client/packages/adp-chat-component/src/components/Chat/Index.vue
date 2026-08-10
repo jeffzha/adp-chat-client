@@ -119,7 +119,10 @@
                     </div>
                 </TCard>
 
-                <Sender 
+                <div v-if="props.readOnly" class="chat-read-only" role="status">
+                    {{ senderI18n.readOnlyNotice }}
+                </div>
+                <Sender v-else
                     ref="senderRef" 
                     :isStreamLoad="isChatting" 
                     :isMobile="isMobile"
@@ -722,6 +725,7 @@ const notifyComplete = () => {
  * 发送消息
  */
 const inputEnter = function (queryVal: string | undefined, fileList?: FileProps[]) {
+    if (props.readOnly) return
     if (props.isChatting) {
         return
     }
@@ -789,6 +793,7 @@ const handleCloseShare = () => {
  * 打开分享设置
  */
 const onShare = async (RecordIds: string[]) => {
+    if (props.readOnly) return
     let _selectedList = chatList.value.filter(item => (item?.RelatedRecordId && RecordIds.includes(item?.RelatedRecordId)) || RecordIds.includes(item?.RecordId)).map(i => i.RecordId)
     isSelecting.value = true
     selectedIds.value = [...new Set([...selectedIds.value, ..._selectedList])]
@@ -798,6 +803,7 @@ const onShare = async (RecordIds: string[]) => {
  * 复制分享链接
  */
 const handleCopyShare = async () => {
+    if (props.readOnly) return;
     if (selectedIds.value.length <= 0) return;
     emit('share', props.chatId, props.currentApplicationId, selectedIds.value);
 }
@@ -806,6 +812,7 @@ const handleCopyShare = async () => {
  * 评分
  */
 const onRate = (record: Record, score: typeof ScoreValue[keyof typeof ScoreValue]) => {
+    if (props.readOnly) return;
     emit('rate', props.chatId, record.RecordId, score);
 }
 
@@ -920,6 +927,18 @@ defineExpose({
 </script>
 
 <style scoped>
+.chat-read-only {
+    margin: 0 auto var(--td-comp-margin-s);
+    width: min(100%, 800px);
+    box-sizing: border-box;
+    border: 1px solid var(--td-warning-color-4, #e5a100);
+    border-radius: var(--td-radius-medium, 6px);
+    background: var(--td-warning-color-1, #fff3d6);
+    color: var(--td-text-color-primary, #1f2329);
+    padding: var(--td-comp-paddingTB-m, 12px) var(--td-comp-paddingLR-l, 16px);
+    text-align: center;
+}
+
 /* ── 主容器 ── */
 .upload-loading {
     position: absolute;

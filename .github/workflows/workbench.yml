@@ -1,0 +1,85 @@
+name: Workbench fork
+
+on:
+  pull_request:
+    paths:
+      - "server/**"
+      - "client/**"
+      - ".github/**"
+  push:
+    paths:
+      - "server/**"
+      - "client/**"
+      - ".github/**"
+
+permissions:
+  contents: read
+
+jobs:
+  boundary:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test boundary, disclosure, and ADR fixtures
+        run: python3 -m unittest discover -s .github/scripts/tests -p "test_*.py" -v
+      - name: Audit fork patch against the recorded upstream baseline
+        run: python3 .github/scripts/check_workbench_boundaries.py --repo "$GITHUB_WORKSPACE" --report-json "$RUNNER_TEMP/adp-workbench-boundary.json"
+      - name: Upload auditable patch manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adp-workbench-boundary
+          path: ${{ runner.temp }}/adp-workbench-boundary.json
+
+  server:
+    needs: boundary
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    env:
+      UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - name: Install locked server dependencies
+        run: uv sync --frozen --extra dev
+      - name: Run workbench security and behavior regression
+        run: uv run pytest -q test/workbench
+      - name: Compile server modules
+        run: uv run python -m compileall -q .
+
+  client:
+    needs: boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install locked client dependencies from the domestic registry
+        run: npm ci --registry=https://registry.npmmirror.com
+      - name: Run workbench client tests
+        run: bun test packages/adp-chat-component/src/model/sseRequest-reasoning.test.ts packages/app/src/workbench/accessState.test.ts packages/app/src/workbench/scheduledTasks.test.ts packages/app/src/workbench/sandbox.test.ts
+      - name: Type-check component
+        run: npm exec --workspace packages/adp-chat-component -- vue-tsc -b
+      - name: Type-check app
+        run: npm run type-check --workspace packages/app
+      - name: Build production client artifacts
+        run: npm run build

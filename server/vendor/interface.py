@@ -3,7 +3,7 @@ ADP Chat Protocol V2 Data Structures and Vendor Interfaces
 """
 
 from enum import Enum
-from typing import Protocol, List, Dict, Optional, Any, Union
+from typing import Awaitable, Callable, Protocol, List, Dict, Optional, Any, Union
 from pydantic import BaseModel
 from sanic.request.types import Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -491,7 +491,9 @@ class ChatInterface:
         is_new_conversation: bool,
         conversation_cb: ConversationCallback,
         search_network=True,
-        custom_variables={}
+        custom_variables={},
+        agent_id: str = None,
+        workbench_evidence_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ):
         """执行聊天对话处理（异步方法）
 
@@ -546,7 +548,15 @@ class MessageInterface:
 
 
 class FileInterface:
-    async def upload(self, db: AsyncSession, request: Request, account_id: str, mime_type: str, mode: str = 'standard') -> str:
+    async def upload(
+        self,
+        db: AsyncSession,
+        request: Request,
+        account_id: str,
+        mime_type: str,
+        mode: str = 'standard',
+        max_file_bytes: int | None = None,
+    ) -> str:
         """异步上传文件
 
         Args:
@@ -560,6 +570,10 @@ class FileInterface:
             url (str): 文件Url
         """
         raise NotImplementedError("Subclasses must implement this method")
+
+
+class FileSizeLimitExceeded(ValueError):
+    pass
 
 
 class ReferenceInterface:

@@ -5,6 +5,11 @@ import {
 } from 'vue-router'
 import { isLoggedIn } from '@/service/login'
 import { httpService } from '@/service/httpService'
+import {
+  initializeWorkbench,
+  setWorkbenchSessionError,
+  workbenchRuntime,
+} from '@/workbench/runtime'
 
 
 const router = createRouter({
@@ -43,6 +48,11 @@ const router = createRouter({
       component: () => import('@/pages/Home.vue'),
     },
     {
+      path: '/unavailable',
+      name: 'workbench-unavailable',
+      component: () => import('@/pages/WorkbenchUnavailable.vue'),
+    },
+    {
       path: '/login',
       name: 'login',
       component: () => import('@/pages/Login.vue'),
@@ -61,6 +71,32 @@ const router = createRouter({
 let entre = false
 router.beforeEach(
   async (to: RouteLocationNormalized, _from: RouteLocationNormalized) => {
+    await initializeWorkbench()
+
+    if (workbenchRuntime.enabled) {
+      if (workbenchRuntime.status === 'error') {
+        if (to.name !== 'workbench-unavailable') return { name: 'workbench-unavailable' }
+        return
+      }
+      if (to.name === 'workbench-unavailable' || to.name === 'login') {
+        return { name: 'home' }
+      }
+      if (to.meta.unauthorized) return
+
+      // Workbench URLs never accept an application id from the browser. The
+      // trusted application comes exclusively from /application/list.
+      if (to.params.applicationId) {
+        return { name: 'home' }
+      }
+      try {
+        await httpService.get('/account/info')
+      } catch {
+        setWorkbenchSessionError('The workbench session is unavailable or has expired.')
+        return { name: 'workbench-unavailable' }
+      }
+      return
+    }
+
     if (to.meta.unauthorized) {
       return
     } else {

@@ -1,10 +1,13 @@
 import logging
+from typing import Any, Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from config import tagentic_config
 from core.account import CoreAccount
 from core.conversation import CoreConversation
 from model.chat import ChatRecord, ChatConversation
+from model.workbench import WorkbenchIdentity
+from core.workbench_control import WorkbenchAppContext, WorkbenchIdentityContext
 from vendor.interface import BaseVendor, ConversationCallback, extract_text_from_contents
 from util.database import db_connection
 
@@ -19,6 +22,18 @@ class CoreChat:
     @staticmethod
     async def resolve_vendor_account_id(account_id: str) -> str:
         async with db_connection() as db:
+            if tagentic_config.WORKBENCH_MODE:
+                identity = (
+                    await db.execute(
+                        select(WorkbenchIdentity).where(
+                            WorkbenchIdentity.AccountId == account_id,
+                            WorkbenchIdentity.Status == "active",
+                        )
+                    )
+                ).scalar()
+                if identity is None:
+                    raise ValueError("active workbench identity is required")
+                return identity.CanonicalSubject
             account = await CoreAccount.get(db, account_id)
             account_third_party = await CoreAccount.get_third_party(db, account_id)
 
@@ -46,6 +61,12 @@ class CoreChat:
         search_network: bool,
         custom_variables: dict,
         is_channel: bool = False,
+        workbench_limits: dict | None = None,
+        workbench_turn_serialized: bool = False,
+        workbench_agent_id: str | None = None,
+        workbench_identity: WorkbenchIdentityContext | None = None,
+        workbench_app_context: WorkbenchAppContext | None = None,
+        workbench_evidence_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ):
         """
         发送聊天消息。
@@ -81,7 +102,11 @@ class CoreChat:
             )
 
         class CoreConversationCallback(ConversationCallback):
-            async def create(self, title: str = None, conversation_id: str = None) -> ChatConversation:
+            async def create(
+                self,
+                title: str = None,
+                vendor_conversation_id: str = None,
+            ) -> ChatConversation:
                 # create
                 if title is None:
                     title = title_source[:10]
@@ -89,23 +114,38 @@ class CoreChat:
                 if is_channel:
                     logger.info(
                         "[CoreChat.message] skip local create for channel conversation %s (account %s)",
-                        conversation_id, account_id,
+                        vendor_conversation_id, account_id,
                     )
-                    return _make_transient_conversation(conversation_id, title)
+                    return _make_transient_conversation(vendor_conversation_id, title)
                 async with db_connection() as db:
+                    ownership = {}
+                    if workbench_identity is not None:
+                        ownership = {
+                            "workbench_identity": workbench_identity,
+                            "workbench_app_context": workbench_app_context,
+                            "workbench_agent_id": workbench_agent_id,
+                        }
                     conversation = await CoreConversation.create(
                         db,
                         account_id,
                         vendor_app.application_id,
                         title=title,
-                        conversation_id=conversation_id
+                        conversation_id=vendor_conversation_id,
+                        **ownership,
                     )
                     return conversation
 
             async def update(self, conversation_id: str = None, title: str = None) -> ChatConversation:
                 # update
                 async with db_connection() as db:
-                    conversation = await CoreConversation.get(db, conversation_id)
+                    conversation = await CoreConversation.get_owned(
+                        db,
+                        account_id,
+                        vendor_app.application_id,
+                        conversation_id,
+                        workbench_identity=workbench_identity,
+                        workbench_app_context=workbench_app_context,
+                    )
                     if conversation is None:
                         # 渠道会话：本地不存在属于预期（vendor 侧才是权威数据源），不补写，
                         # 返回临时对象即可（vendor 仅用其 Id / SSE payload 展示）。
@@ -123,12 +163,20 @@ class CoreChat:
                             "[CoreChat.message] conversation %s missing on update, auto-create for account %s",
                             conversation_id, account_id,
                         )
+                        ownership = {}
+                        if workbench_identity is not None:
+                            ownership = {
+                                "workbench_identity": workbench_identity,
+                                "workbench_app_context": workbench_app_context,
+                                "workbench_agent_id": workbench_agent_id,
+                            }
                         return await CoreConversation.create(
                             db,
                             account_id,
                             vendor_app.application_id,
                             title=title or title_source[:10],
                             conversation_id=conversation_id,
+                            **ownership,
                         )
                     # 已存在（含"渠道会话恰有历史脏数据落到本地"的情况）：正常更新，
                     # 不会新增 → 语义安全
@@ -150,20 +198,62 @@ class CoreChat:
             is_new_conversation = True
         elif not is_channel:
             async with db_connection() as db:
-                if not await CoreConversation.exists(db, account_id, conversation_id):
+                if not await CoreConversation.exists(
+                    db,
+                    account_id,
+                    conversation_id,
+                    workbench_identity=workbench_identity,
+                    workbench_app_context=workbench_app_context,
+                ):
+                    if tagentic_config.WORKBENCH_MODE:
+                        raise ValueError("conversation is outside the active workbench context")
                     logger.info(
                         "[CoreChat.message] conversation %s not in local DB for account %s, will create",
                         conversation_id, account_id,
                     )
+                    ownership = {}
+                    if workbench_identity is not None:
+                        ownership = {
+                            "workbench_identity": workbench_identity,
+                            "workbench_app_context": workbench_app_context,
+                            "workbench_agent_id": workbench_agent_id,
+                        }
                     await CoreConversation.create(
                         db,
                         account_id,
                         vendor_app.application_id,
                         title=title_source[:10],
                         conversation_id=conversation_id,
+                        **ownership,
                     )
                     # 已经在 DB 中创建，无需 vendor 再触发 create 回调；保持 is_new_conversation=False
                     # 让 vendor 走"已有会话继续对话"的分支。
+
+        agent_id = None
+        if tagentic_config.WORKBENCH_MODE:
+            if (
+                not workbench_turn_serialized
+                or not isinstance(workbench_limits, dict)
+                or not workbench_agent_id
+                or workbench_identity is None
+                or workbench_app_context is None
+            ):
+                raise ValueError("workbench Turn serialization is required")
+            if is_channel:
+                raise ValueError("channel conversations are not available in workbench mode")
+            if conversation_id:
+                async with db_connection() as db:
+                    conversation = await CoreConversation.get_owned(
+                        db,
+                        account_id,
+                        vendor_app.application_id,
+                        conversation_id,
+                        workbench_identity=workbench_identity,
+                        workbench_app_context=workbench_app_context,
+                    )
+                    if conversation is None:
+                        raise ValueError("conversation is outside the active workbench context")
+            agent_id = workbench_agent_id
 
         vendor_account_id = await CoreChat.resolve_vendor_account_id(account_id)
         async for message in vendor_app.chat(
@@ -173,7 +263,9 @@ class CoreChat:
             is_new_conversation,
             CoreConversationCallback(),
             search_network=search_network,
-            custom_variables=custom_variables
+            custom_variables=custom_variables,
+            agent_id=agent_id,
+            workbench_evidence_callback=workbench_evidence_callback,
         ):
             yield message
 

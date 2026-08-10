@@ -24,6 +24,8 @@ interface Props {
     i18n?: SideI18n;
     /** 当前语言标识（如 'zh-CN'、'en-US'），用于选择内部默认 i18n */
     language?: string;
+    /** Whether destructive conversation actions are available. */
+    allowDelete?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -32,6 +34,7 @@ const props = withDefaults(defineProps<Props>(), {
     chattingConversationIds: () => [],
     i18n: () => ({}),
     language: 'zh-CN',
+    allowDelete: true,
 });
 
 /** 合并 i18n：外部覆盖 > 按 language 选中/英默认值 */
@@ -120,7 +123,7 @@ const handleDeleteClick = (event: Event, detail: ChatConversation) => {
 
 <template>
     <!-- 会话列表容器 -->
-    <div class="history-list">
+    <div class="history-list" role="listbox" :aria-label="mergedI18n.taskListTitle">
         <div class="history-header">
             <span class="history-header__title">{{ mergedI18n.taskListTitle }}</span>
         </div>
@@ -130,7 +133,12 @@ const handleDeleteClick = (event: Event, detail: ChatConversation) => {
             :key="item.Id"
             class="history-item"
             :class="{ active: currentConversationId === item.Id }"
+            role="option"
+            tabindex="0"
+            :aria-selected="currentConversationId === item.Id"
             @click="handleClick(item)"
+            @keydown.enter.prevent="handleClick(item)"
+            @keydown.space.prevent="handleClick(item)"
         >
             <div class="history-title" :title="item.Title">{{ item.Title }}</div>
             <!--
@@ -142,21 +150,21 @@ const handleDeleteClick = (event: Event, detail: ChatConversation) => {
             <span v-if="chattingIdSet.has(item.Id)" class="history-loading" :aria-label="mergedI18n.inProgress">
                 <TLoading size="14px" />
             </span>
-            <template v-else>
-                <span
+            <template v-else-if="allowDelete">
+                <button type="button"
                     class="history-delete"
                     :aria-label="mergedI18n.deleteConversation"
-                    role="button"
-                    tabindex="0"
                     @click="handleDeleteClick($event, item)"
-                    @keydown.enter.stop.prevent="handleDeleteClick($event, item)"
                 >
                     <TIcon name="delete" size="14px" />
-                </span>
+                </button>
                 <span v-if="item.LastActiveAt" class="history-time">
                     {{ formatUpdateTime(item.LastActiveAt) }}
                 </span>
             </template>
+            <span v-else-if="item.LastActiveAt" class="history-time history-time--readonly">
+                {{ formatUpdateTime(item.LastActiveAt) }}
+            </span>
         </div>
     </div>
 </template>
@@ -233,6 +241,15 @@ const handleDeleteClick = (event: Event, detail: ChatConversation) => {
     display: none;
 }
 
+.history-item:focus-visible {
+    outline: 2px solid var(--td-brand-color, #0052d9);
+    outline-offset: 1px;
+}
+.history-item:hover .history-time--readonly,
+.history-item.active .history-time--readonly {
+    display: inline;
+}
+
 /* 进行中的转圈：始终可见，颜色与主色一致，位置与 history-time 对齐 */
 .history-loading {
     flex-shrink: 0;
@@ -255,11 +272,20 @@ const handleDeleteClick = (event: Event, detail: ChatConversation) => {
     color: var(--td-text-color-placeholder);
     cursor: pointer;
     transition: background 0.15s ease, color 0.15s ease;
+    padding: 0;
+    border: 0;
+    background: transparent;
 }
 
 .history-item:hover .history-delete,
 .history-item.active .history-delete {
     display: inline-flex;
+}
+
+.history-delete:focus-visible {
+    display: inline-flex;
+    outline: 2px solid var(--td-brand-color, #0052d9);
+    outline-offset: 1px;
 }
 
 .history-delete:hover {

@@ -1,6 +1,7 @@
 import time
 import logging
 import asyncio
+from config import tagentic_config
 from app_factory import TAgenticApp
 app = TAgenticApp.get_app()
 
@@ -45,10 +46,15 @@ class CoreApplication:
 
 @app.listener('before_server_start')
 async def init_application_info(app, loop):
+    if tagentic_config.WORKBENCH_MODE:
+        return
     core_app = CoreApplication()
     await core_app.update_application_info()
 
 
 @app.middleware("request")
 async def application_info(request):
+    if tagentic_config.WORKBENCH_MODE:
+        request.ctx.apps_info = []
+        return
     await CoreApplication().hook_application_info(request)

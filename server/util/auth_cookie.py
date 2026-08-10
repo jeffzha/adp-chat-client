@@ -6,6 +6,14 @@ def _has_iframe_origins(config_value: str) -> bool:
 
 
 def cookie_security_options(config: dict[str, Any]) -> dict[str, Any]:
+    if config.get("WORKBENCH_MODE", False):
+        return {
+            "secure": True,
+            # OAuth authorization returns as a top-level cross-site GET. Lax
+            # keeps the HttpOnly session available for the callback while all
+            # state-changing workbench APIs still require double-submit CSRF.
+            "samesite": "Lax",
+        }
     iframe_enabled = _has_iframe_origins(config.get("IFRAME_ORIGINS", ""))
     if iframe_enabled:
         # Third-party iframe cookie requires SameSite=None and Secure.
@@ -33,6 +41,7 @@ def add_auth_token_cookie(
         token,
         path=path,
         max_age=max_age,
+        httponly=True,
         secure=options["secure"],
         samesite=options["samesite"],
     )

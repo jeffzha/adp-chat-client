@@ -231,6 +231,7 @@ function handleDownload(node: any) {
     link.download = entry.name;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
+    link.rel = 'noopener noreferrer';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

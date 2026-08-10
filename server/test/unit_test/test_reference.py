@@ -44,7 +44,8 @@ async def test_tcadp_reference_detail_keeps_pascal_case_fields(monkeypatch):
         application_id="app-1",
     )
 
-    async def fake_tc_request(config, action, payload):
+    async def fake_tc_request(config, action, payload, **kwargs):
+        assert kwargs.get("action_overrides") == vendor_app._action_overrides
         assert config == vendor_app.tc_config()
         assert action == "DescribeRefer"
         assert payload == {

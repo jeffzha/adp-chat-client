@@ -4,6 +4,8 @@ from sanic_restful_api import reqparse
 from sanic.request.types import Request
 from router import login_required
 from core.share import CoreShareConversation
+from config import tagentic_config
+from sanic.exceptions import SanicException
 from app_factory import TAgenticApp
 app: TAgenticApp = TAgenticApp.get_app()
 
@@ -11,6 +13,11 @@ app: TAgenticApp = TAgenticApp.get_app()
 class ShareCreateApi(HTTPMethodView):
     @login_required
     async def post(self, request: Request):
+        if tagentic_config.WORKBENCH_MODE:
+            raise SanicException(
+                "shared conversations are disabled in workbench mode",
+                status_code=403,
+            )
         parser = reqparse.RequestParser()
         parser.add_argument("ConversationId", type=str, required=True, location="json")
         parser.add_argument("ApplicationId", type=str, required=True, location="json")

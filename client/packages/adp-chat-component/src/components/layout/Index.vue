@@ -31,6 +31,8 @@ import {
     createConversation,
     ConversationType,
     sendMessage,
+    resumeWorkbenchTurn,
+    requestWorkbenchTurnCancel,
     rateMessage,
     createShare,
     fetchUserInfo,
@@ -43,10 +45,12 @@ import type { SystemConfig } from '../../service/api';
 import { describeChannel, describeChannelList, ClawChannelStatus, buildChannelUserId, type ChannelItem } from '../../service/channelApi';
 import { MessageCode } from '../../model/messages';
 import { fetchSSE } from '../../model/sseRequest-reasoning';
+import type { WorkbenchTurnProgress } from '../../model/sseRequest-reasoning';
 import { applySseEventToRecord } from '../../utils/mergeRecord-v2';
 import { hydrateType2References } from '../../utils/reference';
 import { copyToClipboard } from '../../utils/clipboard';
 import { useApiConfig } from '../../composables';
+import { createWorkbenchClientRequestId, isWorkbenchMode, projectWorkbenchUploadResponse } from '../../service/workbenchMode';
 import { computeIsMobile } from '../../utils/device';
 import {
     handleWidgetEvent as routeWidgetEvent,
@@ -92,6 +96,8 @@ export interface Props extends ThemeProps, OverlayProps {
     language?: string;
     /** 聊天模式：claw-简化模式（无文件预览/无解析进度），standard-标准模式 */
     mode?: ChatMode;
+    /** 是否禁止所有客户端会话写操作 */
+    readOnly?: boolean;
     /** 是否为浮层模式 */
     isOverlay?: boolean;
     /** 宽度（仅在 isOverlay 为 true 时用于计算 isMobile） */
@@ -199,6 +205,7 @@ const props = withDefaults(defineProps<Props>(), {
     ...overlayPropsDefaults,
     language: 'zh-CN',
     mode: 'standard',
+    readOnly: false,
     isOverlay: false,
     width: 0,
     height: 0,
@@ -234,6 +241,7 @@ const {
     getAgentIdByAppId,
     watchApplicationId,
     agentIdMap,
+    errorMap: agentErrorMap,
     setApplicationModes,
 } = useAgentStore();
 
@@ -511,6 +519,7 @@ interface ConversationRuntimeState {
     isChatting: boolean;
     abortController: AbortController | null;
     applicationId?: string;
+    turnProgress?: WorkbenchTurnProgress;
 }
 
 type ConversationRuntimeStateMap = {
@@ -648,6 +657,35 @@ const mergedChatI18n = computed(() => {
 const mergedSenderI18n = computed(() => {
     const defaults = props.language?.startsWith('en') ? defaultSenderI18nEn : defaultSenderI18n;
     return { ...defaults, ...props.senderI18n };
+});
+
+const currentTurnProgress = computed(() => getConversationRuntimeState(currentConversationStateKey.value)?.turnProgress);
+const currentTurnStatusMessage = computed(() => {
+    const progress = currentTurnProgress.value;
+    if (!progress) return '';
+    const messages = mergedSenderI18n.value;
+    switch (progress.status) {
+        case 'submitting': return messages.turnSubmitting;
+        case 'running': return messages.turnRunning;
+        case 'reconnecting': return messages.turnReconnecting
+            .replace('{current}', String(progress.attempt || 1))
+            .replace('{max}', String(progress.maxAttempts || 1));
+        case 'resumed': return messages.turnResumed;
+        case 'completed': return messages.turnCompleted;
+        case 'failed_before_accept': return messages.turnFailedBeforeAccept;
+        case 'failed_after_accept': return messages.turnFailedAfterAccept;
+        case 'cancel_requested': return messages.turnCancelRequested;
+        case 'cancel_confirmed': return messages.turnCancelConfirmed;
+        case 'provider_unknown': return messages.turnProviderUnknown;
+        default: return '';
+    }
+});
+const currentTurnStatusTone = computed(() => {
+    const status = currentTurnProgress.value?.status;
+    if (status === 'completed' || status === 'resumed') return 'success';
+    if (status === 'failed_before_accept' || status === 'failed_after_accept' || status === 'provider_unknown') return 'error';
+    if (status === 'cancel_requested' || status === 'cancel_confirmed') return 'warning';
+    return 'info';
 });
 
 // 使用 composable 统一管理 API 配置
@@ -837,6 +875,7 @@ const currentApplicationAvatar = computed(() => actualCurrentApplication.value?.
 const currentUserId = computed(() => internalUser.value?.id || '');
 /** 当前应用的 agent ID（来自 useAgentStore 缓存，由 watchApplicationId 自动拉取） */
 const currentAgentId = computed(() => agentIdMap.value[currentApplicationId.value] || '');
+const currentAgentError = computed(() => agentErrorMap.value[currentApplicationId.value] || '');
 const currentApplicationName = computed(() => actualCurrentApplication.value?.Name || '');
 // Skills 的 ApplicationId 优先用显式配置，否则回退到当前应用 ID
 const skillsAppId = computed(() => props.skillsApplicationId || currentApplicationId.value);
@@ -1010,7 +1049,9 @@ const handleInternalSend = async (query: string, fileList: FileProps[], conversa
         try {
             conversationId = await createConversation(
                 {
-                    Type: ConversationType.CONVERSATION_TYPE_VISITOR,
+                    Type: isWorkbenchMode()
+                        ? ConversationType.CONVERSATION_TYPE_API
+                        : ConversationType.CONVERSATION_TYPE_VISITOR,
                     AppId: applicationId,
                     AgentId: agentId,
                 },
@@ -1089,11 +1130,18 @@ const handleInternalSend = async (query: string, fileList: FileProps[], conversa
     // 构建用户消息展示内容（图片和文档都作为 file Content 展示）
     const userContents: Content[] = [{ Type: 'text', Text: query }];
     for (const file of fileList) {
-        if (file.status === 'done' && file.url) {
+        const canDisplayFile = isWorkbenchMode() ? Boolean(file.workbenchFileId) : Boolean(file.url);
+        if (file.status === 'done' && canDisplayFile) {
             const extName = file.name?.split('.').pop() || '';
             userContents.push({
                 Type: 'file',
-                File: { DocId: file.docId || '0', FileName: file.name || '', FileUrl: file.url, FileSize: String(file.size || 0), FileType: extName },
+                File: {
+                    ...(file.workbenchFileId ? { WorkbenchFileId: file.workbenchFileId } : { DocId: file.docId || '0' }),
+                    FileName: file.name || '',
+                    FileUrl: file.url,
+                    FileSize: String(file.size || 0),
+                    FileType: extName,
+                },
             });
         }
     }
@@ -1142,20 +1190,28 @@ const handleInternalSend = async (query: string, fileList: FileProps[], conversa
     const contents: Content[] = [{ Type: 'text', Text: query }];
     // 将所有已上传成功的文件（图片和文档）以 file content 格式加入
     for (const file of fileList) {
-        if (file.status === 'done' && file.url) {
+        const canSendFile = isWorkbenchMode() ? Boolean(file.workbenchFileId) : Boolean(file.url);
+        if (file.status === 'done' && canSendFile) {
             const extName = file.name?.split('.').pop() || '';
             contents.push({
                 Type: 'file',
-                File: {
-                    DocId: file.docId || '0',
-                    FileName: file.name || '',
-                    FileUrl: file.url,
-                    FileSize: String(file.size || 0),
-                    FileType: extName,
-                },
+                File: isWorkbenchMode()
+                    ? {
+                        WorkbenchFileId: file.workbenchFileId,
+                    } as unknown as NonNullable<Content['File']>
+                    : {
+                        DocId: file.docId || '0',
+                        FileName: file.name || '',
+                        FileUrl: file.url,
+                        FileSize: String(file.size || 0),
+                        FileType: extName,
+                    },
             });
         }
     }
+    const workbenchClientRequestId = isWorkbenchMode()
+        ? createWorkbenchClientRequestId()
+        : undefined;
     await fetchSSE(
         () => {
             return sendMessage(
@@ -1163,7 +1219,8 @@ const handleInternalSend = async (query: string, fileList: FileProps[], conversa
                     Contents: contents,
                     ConversationId: conversationId || undefined,
                     ApplicationId: applicationId,
-                    FileInfos: fileList,
+                    ...(workbenchClientRequestId ? { ClientRequestId: workbenchClientRequestId } : {}),
+                    ...(isWorkbenchMode() ? {} : { FileInfos: fileList }),
                     // 渠道会话 / 定时任务会话：告知后端本次会话属于 vendor 权威源，不在本地 chat_conversation 表落地
                     // （对齐 webim：这类会话的权威数据源在 vendor 侧 CAPI，不应污染 /chat/conversations 侧栏列表）
                     IsChannel: shouldSkipLocalConversationPersist.value,
@@ -1173,6 +1230,20 @@ const handleInternalSend = async (query: string, fileList: FileProps[], conversa
             );
         },
         {
+            signal: streamState.abortController?.signal,
+            ...(isWorkbenchMode() ? {
+                stateChange: (progress: WorkbenchTurnProgress) => {
+                    streamState.turnProgress = progress;
+                },
+            } : {}),
+            ...(isWorkbenchMode() ? {
+                resume: (turnId: string, lastEventId: number) => resumeWorkbenchTurn(
+                    turnId,
+                    lastEventId,
+                    { signal: streamState.abortController?.signal },
+                    mergedApiDetailConfig.value.turnEventsApi,
+                ),
+            } : {}),
             success(event: SseEvent) {
                 if (event.Type === 'conversation') {
                     // 创建新的对话，重新调用 chatlist 接口更新列表
@@ -1303,9 +1374,32 @@ const handleInternalSend = async (query: string, fileList: FileProps[], conversa
 };
 
 // 内部停止处理（API 模式）
-const handleInternalStop = () => {
+const handleInternalStop = async () => {
+    const state = getConversationRuntimeState(currentConversationStateKey.value);
+    const turnId = state?.turnProgress?.turnId;
+    if (isWorkbenchMode() && state && turnId) {
+        state.turnProgress = { status: 'cancel_requested', turnId };
+    }
     stopConversationStream(currentConversationStateKey.value);
     emit('stop');
+    if (isWorkbenchMode() && state && turnId) {
+        try {
+            const result = await requestWorkbenchTurnCancel(
+                turnId,
+                mergedApiDetailConfig.value.turnCancelApi,
+            );
+            state.turnProgress = {
+                status: result.Status === 'cancel_confirmed'
+                    ? 'cancel_confirmed'
+                    : 'cancel_requested',
+                turnId,
+            };
+        } catch {
+            // Local subscription is already stopped. Keep the conservative intent
+            // state: no provider cancellation is claimed and background work may continue.
+            state.turnProgress = { status: 'cancel_requested', turnId };
+        }
+    }
 };
 
 // 内部加载更多处理（API 模式）
@@ -2503,6 +2597,9 @@ const sendWidgetActionSSE = async (conversationId: string, applicationId: string
     streamState.abortController = new AbortController();
 
     const contents = [{ Type: 'widget_action', WidgetAction: widgetAction }];
+    const workbenchClientRequestId = isWorkbenchMode()
+        ? createWorkbenchClientRequestId()
+        : undefined;
 
     await fetchSSE(
         () => sendMessage(
@@ -2510,6 +2607,7 @@ const sendWidgetActionSSE = async (conversationId: string, applicationId: string
                 Contents: contents,
                 ConversationId: conversationId || undefined,
                 ApplicationId: applicationId,
+                ...(workbenchClientRequestId ? { ClientRequestId: workbenchClientRequestId } : {}),
                 // 渠道会话 / 定时任务会话：透传 IsChannel，行为对齐 handleInternalSend
                 IsChannel: shouldSkipLocalConversationPersist.value,
             },
@@ -2517,6 +2615,20 @@ const sendWidgetActionSSE = async (conversationId: string, applicationId: string
             mergedApiDetailConfig.value.sendMessageApi
         ),
         {
+            signal: streamState.abortController?.signal,
+            ...(isWorkbenchMode() ? {
+                stateChange: (progress: WorkbenchTurnProgress) => {
+                    streamState.turnProgress = progress;
+                },
+            } : {}),
+            ...(isWorkbenchMode() ? {
+                resume: (turnId: string, lastEventId: number) => resumeWorkbenchTurn(
+                    turnId,
+                    lastEventId,
+                    { signal: streamState.abortController?.signal },
+                    mergedApiDetailConfig.value.turnEventsApi,
+                ),
+            } : {}),
             success(sseEvent: SseEvent) {
                 if (sseEvent.Type === 'conversation') {
                     loadConversations();
@@ -2696,21 +2808,33 @@ const handleInternalUploadFile = async (files: File[]) => {
                 size: file.size,
                 type: file.type,
                 category,
-                status: 'uploading',
+                status: isWorkbenchMode() ? 'security_checking' : 'uploading',
+                statusMessage: isWorkbenchMode()
+                    ? mergedSenderI18n.value.secureFileChecking
+                    : mergedSenderI18n.value.uploadingWait,
             });
         }
 
         try {
-            const response = await uploadFile(file, currentApplicationId.value, mergedApiDetailConfig.value.uploadApi, chatMode.value);
-            if (senderRef && response) {
-                const fileUrl = response.Url || response.url;
+            const rawResponse = await uploadFile(file, currentApplicationId.value, mergedApiDetailConfig.value.uploadApi, chatMode.value);
+            if (senderRef && rawResponse) {
+                const workbenchResponse = isWorkbenchMode()
+                    ? projectWorkbenchUploadResponse(rawResponse)
+                    : null;
+                const response = rawResponse as { [key: string]: unknown };
+                const fileUrl = workbenchResponse
+                    ? ''
+                    : String(response.Url || response.url || '');
+                const workbenchFileId = workbenchResponse?.WorkbenchFileId;
                 senderRef.updateFile(uid, {
                     url: fileUrl,
+                    workbenchFileId,
                     status: 'done',
+                    statusMessage: isWorkbenchMode() ? mergedSenderI18n.value.secureFileReady : '',
                 });
 
                 // standard 模式下，非图片文件需要调用实时文档解析获取 doc_id
-                if (chatMode.value === 'standard' && category === 'document' && mergedApiDetailConfig.value.fileParseApi) {
+                if (!isWorkbenchMode() && chatMode.value === 'standard' && category === 'document' && mergedApiDetailConfig.value.fileParseApi) {
                     const extName = file.name.split('.').pop() || '';
                     try {
                         const parseResult = await parseFile({
@@ -2718,10 +2842,10 @@ const handleInternalUploadFile = async (files: File[]) => {
                             FileName: file.name,
                             FileType: extName,
                             FileUrl: fileUrl,
-                            CosUrl: response.CosUrl || response.cos_url || '',
-                            CosBucket: response.CosBucket || response.cos_bucket || '',
-                            ETag: response.ETag || response.e_tag || '',
-                            CosHash: response.CosHash || response.cos_hash || '',
+                            CosUrl: String(response.CosUrl || response.cos_url || ''),
+                            CosBucket: String(response.CosBucket || response.cos_bucket || ''),
+                            ETag: String(response.ETag || response.e_tag || ''),
+                            CosHash: String(response.CosHash || response.cos_hash || ''),
                             Size: String(file.size || 0),
                         }, mergedApiDetailConfig.value.fileParseApi);
 
@@ -2735,9 +2859,18 @@ const handleInternalUploadFile = async (files: File[]) => {
             }
         } catch (error) {
             if (senderRef) {
-                senderRef.removeFile(uid);
+                if (isWorkbenchMode()) {
+                    senderRef.updateFile(uid, {
+                        status: 'error',
+                        statusMessage: mergedSenderI18n.value.secureFileRejected,
+                    });
+                } else {
+                    senderRef.removeFile(uid);
+                }
             }
-            const uploadErrorText = mergedSenderI18n.value.uploadError;
+            const uploadErrorText = isWorkbenchMode()
+                ? mergedSenderI18n.value.secureFileRejected
+                : mergedSenderI18n.value.uploadError;
             MessagePlugin.error(uploadErrorText);
             emit('message', MessageCode.FILE_UPLOAD_FAILED, uploadErrorText);
         }
@@ -3077,6 +3210,7 @@ defineExpose({
                 :channelSettingAgentId="currentAgentId"
                 :chatMode="chatMode"
                 :language="language"
+                :readOnly="props.readOnly"
                 @toggleSidebar="handleToggleSidebar"
                 @selectApplication="handleSelectApplication"
                 @selectConversation="handleSelectConversation"
@@ -3106,6 +3240,9 @@ defineExpose({
                 ref="mainLayoutRef"
                 :currentApplicationAvatar="currentApplicationAvatar"
                 :currentApplicationName="currentApplicationName"
+                :statusError="currentAgentError"
+                :turnStatusMessage="isWorkbenchMode() ? currentTurnStatusMessage : ''"
+                :turnStatusTone="currentTurnStatusTone"
                 :currentApplicationGreeting="currentApplicationGreeting"
                 :currentApplicationOpeningQuestions="currentApplicationOpeningQuestions"
                 :currentApplicationId="currentApplicationId"
@@ -3115,6 +3252,7 @@ defineExpose({
                 :isMobile="isMobile"
                 :theme="theme"
                 :language="props.language"
+                :readOnly="props.readOnly"
                 :mode="chatMode"
                 :showSidebarToggle="!sidebarVisible"
                 :aiWarningText="aiWarningText"
@@ -3125,7 +3263,7 @@ defineExpose({
                 :asrUrlApi="mergedApiDetailConfig.asrUrlApi"
                 :enableVoiceInput="enableVoiceInput"
                 :isUploading="isUploading"
-                :channelInputDisabled="channelInputDisabled"
+                :channelInputDisabled="channelInputDisabled || props.readOnly"
                 :channelDividerText="channelDividerText"
                 :isOverlay="props.isOverlay"
                 :enableSkills="props.enableSkills"

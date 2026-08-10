@@ -6,6 +6,7 @@ from .redis_config import RedisConfig
 from .pgsql_config import PGSqlConfig
 from .tcadp_config import TCADPConfig
 from .oauth_config import OAuthConfig
+from .workbench_config import WorkbenchConfig
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ class TAgenticConfig(
     PGSqlConfig,
     TCADPConfig,
     OAuthConfig,
+    WorkbenchConfig,
 ):
     LOG_LEVEL: str = Field(
         description="Log level of the server, can be one of: CRITICAL, FATAL, ERROR, WARN, WARNING, INFO, DEBUG",
