@@ -30,6 +30,7 @@ class PreparedWorkbenchAction:
     payload: dict[str, Any]
     provider_app_id: str
     agent_id: str | None = None
+    ownership_principal_id: str | None = None
     conversation_id: str | None = None
     local_title: str | None = None
     local_response: dict[str, Any] | None = None
@@ -147,6 +148,21 @@ class WorkbenchActionPolicy:
             status_code=503,
         )
 
+        if app_context is not None:
+            if not app_context.execution_enabled:
+                raise WorkbenchActionPolicyError(
+                    "workbench runtime profile execution is not enabled",
+                    503,
+                )
+            if (
+                action in {"CopyAgentFromApp", "DescribeAgentDetail", "ModifyAgent"}
+                and not app_context.runtime.uses_provider_user_agent
+            ):
+                raise WorkbenchActionPolicyError(
+                    "provider user Agent operations are unavailable for this runtime profile",
+                    403,
+                )
+
         if action in WorkbenchCatalogPolicy.ACTION_CAPABILITIES:
             if app_context is None:
                 raise WorkbenchActionPolicyError(
@@ -223,19 +239,21 @@ class WorkbenchActionPolicy:
                         "CopyAgentFromApp Kind is not supported",
                         400,
                     )
-            agent_id = await cls._resolve_agent_id(
+            ownership_principal_id, agent_id = await cls._resolve_runtime_principal(
                 db,
                 account_id=account_id,
                 application_id=application_id,
                 vendor_app=vendor_app,
                 allow_provision=True,
                 identity=identity,
+                app_context=app_context,
             )
             return PreparedWorkbenchAction(
                 action=action,
                 application_id=application_id,
                 provider_app_id=provider_app_id,
                 agent_id=agent_id,
+                ownership_principal_id=ownership_principal_id,
                 payload={},
                 local_response={"ParentAgentId": agent_id},
             )
@@ -269,13 +287,14 @@ class WorkbenchActionPolicy:
                         "DescribeAgentDetail Domain is not supported",
                         400,
                     )
-            agent_id = await cls._resolve_agent_id(
+            ownership_principal_id, agent_id = await cls._resolve_runtime_principal(
                 db,
                 account_id=account_id,
                 application_id=application_id,
                 vendor_app=vendor_app,
                 allow_provision=access_mode == "active",
                 identity=identity,
+                app_context=app_context,
             )
             if "AgentId" in payload:
                 supplied_agent_id = cls._require_string(
@@ -293,6 +312,7 @@ class WorkbenchActionPolicy:
                 application_id=application_id,
                 provider_app_id=provider_app_id,
                 agent_id=agent_id,
+                ownership_principal_id=ownership_principal_id,
                 payload={"AppId": provider_app_id, "AgentId": agent_id},
             )
 
@@ -386,13 +406,14 @@ class WorkbenchActionPolicy:
             )
             title = payload.get("Title", "new conversation")
             title = cls._require_string(title, "Title", max_length=255)
-            agent_id = await cls._resolve_agent_id(
+            ownership_principal_id, agent_id = await cls._resolve_runtime_principal(
                 db,
                 account_id=account_id,
                 application_id=application_id,
                 vendor_app=vendor_app,
                 allow_provision=True,
                 identity=identity,
+                app_context=app_context,
             )
             if "Type" in payload:
                 cls._bounded_int(
@@ -413,6 +434,11 @@ class WorkbenchActionPolicy:
                         403,
                     )
             if "AgentId" in payload:
+                if agent_id is None:
+                    raise WorkbenchActionPolicyError(
+                        "CreateConversation AgentId is unavailable for this runtime profile",
+                        403,
+                    )
                 supplied_agent_id = cls._require_string(
                     payload["AgentId"],
                     "CreateConversation AgentId",
@@ -429,6 +455,7 @@ class WorkbenchActionPolicy:
                 application_id=application_id,
                 provider_app_id=provider_app_id,
                 agent_id=agent_id,
+                ownership_principal_id=ownership_principal_id,
                 local_title=title,
                 identity=identity,
                 app_context=app_context,
@@ -437,7 +464,7 @@ class WorkbenchActionPolicy:
                     "AppId": provider_app_id,
                     "AppKey": app_key,
                     "UserId": user_id,
-                    "AgentId": agent_id,
+                    **({"AgentId": agent_id} if agent_id is not None else {}),
                 },
             )
 
@@ -457,23 +484,25 @@ class WorkbenchActionPolicy:
                     max_length=200,
                     allow_empty=True,
                 )
-            agent_id = await cls._resolve_agent_id(
+            ownership_principal_id, agent_id = await cls._resolve_runtime_principal(
                 db,
                 account_id=account_id,
                 application_id=application_id,
                 vendor_app=vendor_app,
                 allow_provision=access_mode == "active",
                 identity=identity,
+                app_context=app_context,
             )
             upstream_payload: dict[str, Any] = {
                 "Type": 5,
                 "AppId": provider_app_id,
                 "AppKey": app_key,
                 "UserId": user_id,
-                "AgentId": agent_id,
                 "Limit": limit,
                 "Offset": offset,
             }
+            if agent_id is not None:
+                upstream_payload["AgentId"] = agent_id
             if keyword is not None:
                 upstream_payload["Keyword"] = keyword
             cls._require_workspace_context(identity, app_context, provider_app_id)
@@ -482,6 +511,7 @@ class WorkbenchActionPolicy:
                 application_id=application_id,
                 provider_app_id=provider_app_id,
                 agent_id=agent_id,
+                ownership_principal_id=ownership_principal_id,
                 identity=identity,
                 app_context=app_context,
                 payload=upstream_payload,
@@ -504,13 +534,14 @@ class WorkbenchActionPolicy:
                 app_context=app_context,
                 provider_app_id=provider_app_id,
             )
-            agent_id = await cls._resolve_agent_id(
+            ownership_principal_id, agent_id = await cls._resolve_runtime_principal(
                 db,
                 account_id=account_id,
                 application_id=application_id,
                 vendor_app=vendor_app,
                 allow_provision=access_mode == "active",
                 identity=identity,
+                app_context=app_context,
             )
             upstream_payload = {
                 "ConversationId": conversation_id,
@@ -543,6 +574,7 @@ class WorkbenchActionPolicy:
                 application_id=application_id,
                 provider_app_id=provider_app_id,
                 agent_id=agent_id,
+                ownership_principal_id=ownership_principal_id,
                 conversation_id=conversation_id,
                 identity=identity,
                 app_context=app_context,
@@ -610,7 +642,7 @@ class WorkbenchActionPolicy:
                 conversation_id=conversation_id,
                 workbench_identity=prepared.identity,
                 workbench_app_context=prepared.app_context,
-                workbench_agent_id=prepared.agent_id,
+                workbench_agent_id=prepared.ownership_principal_id,
             )
 
         public_workspace = None
@@ -689,7 +721,7 @@ class WorkbenchActionPolicy:
                             "provider conversation item is invalid",
                             502,
                         )
-                    cls._require_provider_conversation_identifiers(item)
+                    cls._require_provider_conversation_identifiers(item, prepared)
                 filtered_items = []
                 for item in items:
                     if not cls._conversation_item_is_owned(item, prepared):
@@ -755,7 +787,7 @@ class WorkbenchActionPolicy:
         return projected
 
     @classmethod
-    async def _resolve_agent_id(
+    async def _resolve_runtime_principal(
         cls,
         db: AsyncSession,
         *,
@@ -764,15 +796,53 @@ class WorkbenchActionPolicy:
         vendor_app: BaseVendor,
         allow_provision: bool,
         identity: WorkbenchIdentityContext,
-    ) -> str:
+        app_context: WorkbenchAppContext | None,
+    ) -> tuple[str, str | None]:
+        uses_provider_user_agent = (
+            app_context is None or app_context.runtime.uses_provider_user_agent
+        )
         try:
-            if allow_provision:
+            if uses_provider_user_agent and allow_provision:
                 record = await CoreAgent.ensure(
                     db,
                     account_id,
                     application_id,
                     vendor_app,
                     identity_context=identity,
+                )
+            elif uses_provider_user_agent:
+                record = await CoreAgent.get(db, account_id, application_id)
+            elif allow_provision:
+                if app_context is None:
+                    raise WorkbenchActionPolicyError(
+                        "trusted runtime profile is unavailable",
+                        503,
+                    )
+                limits = dict(app_context.limits or {})
+                principal = await CoreAgent.ensure_runtime_principal(
+                    db,
+                    account_id,
+                    app_context,
+                    vendor_app,
+                    max_output_tokens=int(limits.get("max_output_tokens") or 1),
+                    max_reasoning_rounds=int(
+                        limits.get("max_reasoning_rounds") or 1
+                    ),
+                    identity_context=identity,
+                )
+                if principal.provider_agent_id is not None:
+                    raise WorkbenchActionPolicyError(
+                        "non-dynamic runtime resolved a provider Agent",
+                        503,
+                    )
+                return (
+                    cls._require_string(
+                        principal.ownership_id,
+                        "trusted runtime ownership principal",
+                        max_length=128,
+                        status_code=409,
+                    ),
+                    None,
                 )
             else:
                 record = await CoreAgent.get(db, account_id, application_id)
@@ -781,13 +851,29 @@ class WorkbenchActionPolicy:
         except ValueError as error:
             raise WorkbenchActionPolicyError(str(error), 503) from error
         if record is None:
-            raise WorkbenchActionPolicyError("workbench Agent is not provisioned", 409)
-        return cls._require_string(
+            raise WorkbenchActionPolicyError(
+                "workbench runtime principal is not provisioned",
+                409,
+            )
+        principal_id = cls._require_string(
             record.AgentId,
-            "trusted AgentId",
+            "trusted runtime principal",
             max_length=128,
             status_code=409,
         )
+        if uses_provider_user_agent:
+            if principal_id.startswith(CoreAgent._LOCAL_RUNTIME_PREFIX):
+                raise WorkbenchActionPolicyError(
+                    "runtime profile changed and requires Agent reconciliation",
+                    409,
+                )
+            return principal_id, principal_id
+        if not principal_id.startswith(CoreAgent._LOCAL_RUNTIME_PREFIX):
+            raise WorkbenchActionPolicyError(
+                "runtime profile changed and requires Agent reconciliation",
+                409,
+            )
+        return principal_id, None
 
     @staticmethod
     async def _assert_conversation_owner(
@@ -844,7 +930,7 @@ class WorkbenchActionPolicy:
         *,
         exact_id: bool,
     ) -> None:
-        cls._require_provider_conversation_identifiers(item)
+        cls._require_provider_conversation_identifiers(item, prepared)
         if not cls._conversation_item_is_owned(item, prepared):
             raise WorkbenchActionPolicyError(
                 "provider returned a conversation outside the trusted context",
@@ -869,23 +955,36 @@ class WorkbenchActionPolicy:
         if str(item.get("AppId") or "") != prepared.provider_app_id:
             return False
         item_agent_id = str(item.get("AgentId") or "")
-        if not prepared.agent_id or item_agent_id != prepared.agent_id:
+        if prepared.agent_id is None:
+            if item_agent_id:
+                return False
+        elif item_agent_id != prepared.agent_id:
             return False
         return True
 
     @classmethod
-    def _require_provider_conversation_identifiers(cls, item: dict[str, Any]) -> None:
+    def _require_provider_conversation_identifiers(
+        cls,
+        item: dict[str, Any],
+        prepared: PreparedWorkbenchAction,
+    ) -> None:
         cls._uuid_string(
             item.get("ConversationId"),
             "provider ConversationId",
             status_code=502,
         )
-        cls._require_string(
-            item.get("AgentId"),
-            "provider AgentId",
-            max_length=128,
-            status_code=502,
-        )
+        if prepared.agent_id is not None:
+            cls._require_string(
+                item.get("AgentId"),
+                "provider AgentId",
+                max_length=128,
+                status_code=502,
+            )
+        elif item.get("AgentId") not in {None, ""}:
+            raise WorkbenchActionPolicyError(
+                "provider returned an unexpected AgentId for this runtime profile",
+                502,
+            )
 
     @classmethod
     def _redact(cls, value: Any) -> Any:

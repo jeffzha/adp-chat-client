@@ -80,7 +80,13 @@ async def test_resolver_replaces_version_and_revoke_removes_all_references(
 
     assert app.apps[initial.application_id] is not first_vendor
     assert app.apps[initial.application_id].config["AppKey"] == "rotated-secret"
-    assert WorkbenchAppResolver._versions[initial.application_id] == (2, 4)
+    assert WorkbenchAppResolver._versions[initial.application_id] == (
+        2,
+        4,
+        4,
+        "claw_dynamic_v2",
+        True,
+    )
     WorkbenchAppResolver.revoke(initial.application_id)
     assert initial.application_id not in app.apps
     assert initial.application_id not in WorkbenchAppResolver._versions

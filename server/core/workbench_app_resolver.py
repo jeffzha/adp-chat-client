@@ -15,7 +15,7 @@ class WorkbenchAppResolver:
         }
     )
     _lock = asyncio.Lock()
-    _versions: dict[str, tuple[int, int]] = {}
+    _versions: dict[str, tuple[int, int, int, str, bool]] = {}
     _last_used: OrderedDict[str, float] = OrderedDict()
     _clock = time.monotonic
 
@@ -56,7 +56,13 @@ class WorkbenchAppResolver:
             app = TAgenticApp.get_app()
             now = cls._clock()
             cls._evict_expired_locked(app, now)
-            version_key = (context.config_version, context.auth_epoch)
+            version_key = (
+                context.config_version,
+                context.auth_epoch,
+                context.provider_app_mode,
+                context.runtime_profile,
+                context.execution_enabled,
+            )
             if (
                 cls._versions.get(context.application_id) == version_key
                 and context.application_id in app.apps

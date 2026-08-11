@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.agent import AgentProvisioningError, CoreAgent
-from core.workbench_control import WorkbenchIdentityContext
+from core.workbench_control import WorkbenchAppContext, WorkbenchIdentityContext
 from model.workbench import WorkbenchAgentBinding
 
 
@@ -51,6 +51,80 @@ def _limit_db(binding):
         add=lambda _value: None,
         commit=AsyncMock(),
     )
+
+
+def _runtime_app_context(provider_app_mode, runtime_profile):
+    return WorkbenchAppContext(
+        application_id="customer-app-7",
+        app_profile_id="7",
+        config_version=4,
+        auth_epoch=3,
+        vendor="Tencent",
+        service_vendor="ChinaTencentCloud",
+        app_id="provider-app-7",
+        app_key="provider-app-key",
+        space_id="space-7",
+        template_agent_id="",
+        secret_id="secret-id",
+        secret_key="secret-key",
+        capabilities=("chat",),
+        limits={},
+        provider_app_mode=provider_app_mode,
+        runtime_profile=runtime_profile,
+        execution_enabled=False,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_app_mode", "runtime_profile"),
+    [
+        (1, "standard_v2"),
+        (2, "multi_agent_v2"),
+        (3, "workflow_v2"),
+        (4, "claw_static_v2"),
+    ],
+)
+async def test_non_dynamic_runtime_principal_never_calls_provider_agent_api(
+    monkeypatch, provider_app_mode, runtime_profile
+):
+    identity_row = SimpleNamespace(BindingId="binding-7")
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=_ScalarResult(identity_row)),
+        add=lambda _value: None,
+    )
+    vendor = SimpleNamespace(forward_request=AsyncMock())
+    monkeypatch.setattr(CoreAgent, "_lock_workbench_binding", AsyncMock(return_value=None))
+    monkeypatch.setattr(CoreAgent, "get", AsyncMock(return_value=None))
+    report = AsyncMock()
+    monkeypatch.setattr(CoreAgent, "_report_workbench_agent", report)
+    identity = WorkbenchIdentityContext(
+        binding_id="binding-7",
+        canonical_subject="napi:prod:customer:7:user:9",
+        customer_id=7,
+        new_api_user_id=9,
+        auth_epoch=3,
+        display_name="User 9",
+        application_id="customer-app-7",
+        app_profile_id="7",
+        access_mode="active",
+        config_version=4,
+    )
+
+    principal = await CoreAgent.ensure_runtime_principal(
+        db,
+        "account-9",
+        _runtime_app_context(provider_app_mode, runtime_profile),
+        vendor,
+        max_output_tokens=8192,
+        max_reasoning_rounds=20,
+        identity_context=identity,
+    )
+
+    assert principal.ownership_id.startswith("wrp_")
+    assert principal.provider_agent_id is None
+    vendor.forward_request.assert_not_awaited()
+    report.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import core.workbench_runtime_profile as runtime_profile_module
 from core.agent import CoreAgent
 from core.conversation import CoreConversation
 from core.workbench_action_policy import (
@@ -76,6 +77,172 @@ def request_body(payload=None, **extra):
     }
     body.update(extra)
     return body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_app_mode", "runtime_profile", "expects_provider_agent"),
+    [
+        (1, "standard_v2", False),
+        (2, "multi_agent_v2", False),
+        (3, "workflow_v2", False),
+        (4, "claw_static_v2", False),
+        (4, "claw_dynamic_v2", True),
+    ],
+)
+async def test_generic_conversation_actions_follow_exact_runtime_profile(
+    monkeypatch,
+    identity,
+    vendor,
+    app_context,
+    provider_app_mode,
+    runtime_profile,
+    expects_provider_agent,
+):
+    monkeypatch.setattr(
+        runtime_profile_module,
+        "LOCALLY_ACCEPTED_EXECUTION_PROFILES",
+        frozenset(runtime_profile_module.RUNTIME_PROFILES),
+    )
+    context = WorkbenchAppContext(
+        **{
+            **app_context.__dict__,
+            "provider_app_mode": provider_app_mode,
+            "runtime_profile": runtime_profile,
+            "execution_enabled": True,
+            "template_agent_id": (
+                "template-agent-7" if expects_provider_agent else ""
+            ),
+            "limits": {
+                "max_output_tokens": 8192,
+                "max_reasoning_rounds": 20,
+            },
+        }
+    )
+    ensure_provider = AsyncMock(
+        return_value=SimpleNamespace(AgentId="user-agent-9")
+    )
+    ensure_local = AsyncMock(
+        return_value=SimpleNamespace(
+            ownership_id="wrp_local-principal",
+            provider_agent_id=None,
+        )
+    )
+    monkeypatch.setattr(CoreAgent, "ensure", ensure_provider)
+    monkeypatch.setattr(CoreAgent, "ensure_runtime_principal", ensure_local)
+
+    created = await WorkbenchActionPolicy.prepare(
+        None,
+        action="CreateConversation",
+        request_body=request_body({"Title": "Runtime profile"}),
+        account_id="account-9",
+        identity=identity,
+        vendor_app=vendor,
+        app_context=context,
+    )
+    listed = await WorkbenchActionPolicy.prepare(
+        None,
+        action="DescribeConversationList",
+        request_body=request_body({"Limit": 10, "Offset": 0}),
+        account_id="account-9",
+        identity=identity,
+        vendor_app=vendor,
+        app_context=context,
+    )
+
+    for prepared in (created, listed):
+        assert prepared.payload["Type"] == 5
+        assert prepared.payload["AppId"] == "provider-app-7"
+        assert prepared.payload["UserId"] == identity.canonical_subject
+        if expects_provider_agent:
+            assert prepared.payload["AgentId"] == "user-agent-9"
+            assert prepared.ownership_principal_id == "user-agent-9"
+        else:
+            assert "AgentId" not in prepared.payload
+            assert prepared.agent_id is None
+            assert prepared.ownership_principal_id == "wrp_local-principal"
+
+    if expects_provider_agent:
+        assert ensure_provider.await_count == 2
+        ensure_local.assert_not_awaited()
+    else:
+        ensure_provider.assert_not_awaited()
+        assert ensure_local.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_static_generic_conversation_list_accepts_only_agentless_owned_items(
+    monkeypatch,
+    identity,
+    vendor,
+    app_context,
+):
+    monkeypatch.setattr(
+        runtime_profile_module,
+        "LOCALLY_ACCEPTED_EXECUTION_PROFILES",
+        frozenset(runtime_profile_module.RUNTIME_PROFILES),
+    )
+    context = WorkbenchAppContext(
+        **{
+            **app_context.__dict__,
+            "runtime_profile": "claw_static_v2",
+            "execution_enabled": True,
+            "template_agent_id": "",
+            "limits": {
+                "max_output_tokens": 8192,
+                "max_reasoning_rounds": 20,
+            },
+        }
+    )
+    monkeypatch.setattr(
+        CoreAgent,
+        "ensure_runtime_principal",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                ownership_id="wrp_local-principal",
+                provider_agent_id=None,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        CoreConversation,
+        "get_owned",
+        AsyncMock(return_value=SimpleNamespace(Id="owned")),
+    )
+    prepared = await WorkbenchActionPolicy.prepare(
+        None,
+        action="DescribeConversationList",
+        request_body=request_body(),
+        account_id="account-9",
+        identity=identity,
+        vendor_app=vendor,
+        app_context=context,
+    )
+
+    projected = await WorkbenchActionPolicy.project_response(
+        None,
+        prepared=prepared,
+        account_id="account-9",
+        response={
+            "ConversationList": [
+                {
+                    "ConversationId": "4abd149a-e010-4a6c-bc52-1132658f149d",
+                    "Type": 5,
+                    "AppId": "provider-app-7",
+                    "Title": "owned",
+                }
+            ],
+            "TotalCount": 1,
+        },
+    )
+
+    assert projected["ConversationList"] == [
+        {
+            "ConversationId": "4abd149a-e010-4a6c-bc52-1132658f149d",
+            "Type": 5,
+            "Title": "owned",
+        }
+    ]
 
 
 @pytest.mark.asyncio

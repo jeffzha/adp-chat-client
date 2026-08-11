@@ -83,6 +83,70 @@ class WorkbenchAppMigrationWorker:
         ).encode("utf-8")
         return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
+    @staticmethod
+    def _local_runtime_principal_id(task: WorkbenchAppMigrationTask) -> str:
+        digest = hashlib.sha256(
+            "\x00".join(
+                (
+                    task.binding_id,
+                    task.target_application_id,
+                    str(task.target_app_profile_id),
+                    str(task.target_config_version),
+                    task.runtime_profile,
+                )
+            ).encode("utf-8")
+        ).hexdigest()[:48]
+        return "wrp_" + digest
+
+    @classmethod
+    async def _activate_local_runtime_principal(
+        cls,
+        db: AsyncSession,
+        task: WorkbenchAppMigrationTask,
+        binding: WorkbenchAgentBinding,
+        existing_principal_id: str | None,
+    ) -> None:
+        principal_id = cls._local_runtime_principal_id(task)
+        if existing_principal_id is not None and existing_principal_id != principal_id:
+            raise WorkbenchAppMigrationError(
+                "target_runtime_principal_requires_reconciliation"
+            )
+        if existing_principal_id is None:
+            binding = await cls._locked_binding(db, task)
+            if (
+                binding is None
+                or binding.Status != "provisioning"
+                or binding.AttemptId != task.attempt_id
+            ):
+                raise WorkbenchAppMigrationError(
+                    "target_runtime_binding_attempt_changed"
+                )
+
+        config = (
+            await db.execute(
+                select(AgentConfig)
+                .where(
+                    AgentConfig.AccountId == task.adp_account_id,
+                    AgentConfig.ApplicationId == task.target_application_id,
+                )
+                .with_for_update()
+            )
+        ).scalar()
+        if config is None:
+            config = AgentConfig(
+                AccountId=task.adp_account_id,
+                ApplicationId=task.target_application_id,
+                AgentId=principal_id,
+            )
+            db.add(config)
+        elif config.AgentId != principal_id:
+            raise WorkbenchAppMigrationError("target_agent_config_conflict")
+        binding.AgentId = principal_id
+        binding.Status = "active"
+        binding.ErrorCode = None
+        db.add(binding)
+        await db.commit()
+
     @classmethod
     async def _prepare_local_binding(
         cls,
@@ -154,13 +218,41 @@ class WorkbenchAppMigrationWorker:
     ) -> None:
         if task.provider.application_id != task.target_application_id:
             raise WorkbenchAppMigrationError("target_provider_context_mismatch")
-        await WorkbenchAppResolver.ensure_vendor(task.provider)
+        try:
+            runtime = task.provider.runtime
+        except ValueError as error:
+            raise WorkbenchAppMigrationError("target_runtime_profile_invalid") from error
+        if (
+            runtime.provider_app_mode != task.provider_app_mode
+            or runtime.name != task.runtime_profile
+            or runtime.execution_enabled != task.execution_enabled
+        ):
+            raise WorkbenchAppMigrationError("target_runtime_profile_mismatch")
+        provider_context_installed = False
+        if runtime.uses_provider_user_agent:
+            await WorkbenchAppResolver.ensure_vendor(task.provider)
+            provider_context_installed = True
         provider_side_effect_started = False
         locally_verified = False
         known_agent_id = task.known_target_agent_id
         try:
-            vendor = TAgenticApp.get_app().get_vendor_app(task.target_application_id)
             binding, existing_agent_id = await cls._prepare_local_binding(db, task)
+            if not runtime.uses_provider_user_agent:
+                await cls._activate_local_runtime_principal(
+                    db,
+                    task,
+                    binding,
+                    existing_agent_id,
+                )
+                locally_verified = True
+                await WorkbenchControlClient.report_app_migration_task(
+                    task,
+                    status="succeeded",
+                    target_agent_id="",
+                    target_readback_hash="",
+                )
+                return
+            vendor = TAgenticApp.get_app().get_vendor_app(task.target_application_id)
             agent_id = existing_agent_id
             if agent_id is None:
                 provider_side_effect_started = True
@@ -258,7 +350,8 @@ class WorkbenchAppMigrationWorker:
                 )
             raise
         finally:
-            WorkbenchAppResolver.revoke(task.target_application_id)
+            if provider_context_installed:
+                WorkbenchAppResolver.revoke(task.target_application_id)
 
     @classmethod
     async def run(cls, sessionmaker) -> None:

@@ -86,6 +86,26 @@ def test_plain_chat_returns_the_trusted_limits_for_server_side_enforcement():
     assert limits["max_reasoning_rounds"] == 20
 
 
+def test_unaccepted_runtime_profile_cannot_start_a_turn():
+    context = _app_context(capabilities=("chat",))
+    context = WorkbenchAppContext(
+        **{
+            **context.__dict__,
+            "provider_app_mode": 1,
+            "runtime_profile": "standard_v2",
+            "execution_enabled": False,
+            "template_agent_id": "",
+        }
+    )
+
+    with pytest.raises(WorkbenchPolicyError, match="execution is not enabled"):
+        WorkbenchPolicy.validate_new_turn(
+            _identity(),
+            context,
+            search_network=False,
+        )
+
+
 @pytest.mark.parametrize(
     "capability",
     ["web_search", "tools", "connectors"],

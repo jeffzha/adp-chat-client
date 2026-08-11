@@ -1227,20 +1227,22 @@ class TCADP(BaseVendor):
             contents.append({"Type": "custom_variables", "CustomVariables": custom_variables})
 
         if is_new_conversation:
-            if agent_id:
+            if agent_id or tagentic_config.WORKBENCH_MODE:
                 provider_app_id = str(self.config.get('AppId') or '').strip()
                 app_key = str(self.config.get('AppKey') or '').strip()
                 if not provider_app_id or not app_key or not account_id:
                     raise ValueError("trusted conversation context is incomplete")
+                create_payload = {
+                    "Type": 5,
+                    "AppId": provider_app_id,
+                    "AppKey": app_key,
+                    "UserId": account_id,
+                }
+                if agent_id:
+                    create_payload["AgentId"] = agent_id
                 create_response = await self.forward_request(
                     "CreateConversation",
-                    {
-                        "Type": 5,
-                        "AppId": provider_app_id,
-                        "AppKey": app_key,
-                        "UserId": account_id,
-                        "AgentId": agent_id,
-                    },
+                    create_payload,
                 )
                 raw_conversation_id = create_response.get("ConversationId")
                 try:

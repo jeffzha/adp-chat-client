@@ -218,7 +218,10 @@ async def test_sandbox_recovery_route_reads_only_owner_scoped_local_state(monkey
             db=object(),
             account_id="account-9",
             workbench_context=SimpleNamespace(binding_id="binding-9"),
-            workbench_app_context=SimpleNamespace(application_id="customer-app-7"),
+            workbench_app_context=SimpleNamespace(
+                application_id="customer-app-7",
+                runtime=SimpleNamespace(uses_provider_user_agent=True),
+            ),
         ),
     )
 
@@ -460,7 +463,10 @@ async def test_read_only_agent_get_never_provisions(monkeypatch):
             db=object(),
             account_id="account-9",
             workbench_context=SimpleNamespace(access_mode="read_only"),
-            workbench_app_context=SimpleNamespace(application_id="customer-app-7"),
+            workbench_app_context=SimpleNamespace(
+                application_id="customer-app-7",
+                runtime=SimpleNamespace(uses_provider_user_agent=True),
+            ),
         )
     )
 

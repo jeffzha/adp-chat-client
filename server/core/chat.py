@@ -64,6 +64,7 @@ class CoreChat:
         workbench_limits: dict | None = None,
         workbench_turn_serialized: bool = False,
         workbench_agent_id: str | None = None,
+        workbench_send_agent_id: bool = True,
         workbench_identity: WorkbenchIdentityContext | None = None,
         workbench_app_context: WorkbenchAppContext | None = None,
         workbench_evidence_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
@@ -253,7 +254,7 @@ class CoreChat:
                     )
                     if conversation is None:
                         raise ValueError("conversation is outside the active workbench context")
-            agent_id = workbench_agent_id
+            agent_id = workbench_agent_id if workbench_send_agent_id else None
 
         vendor_account_id = await CoreChat.resolve_vendor_account_id(account_id)
         async for message in vendor_app.chat(

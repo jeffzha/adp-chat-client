@@ -575,7 +575,7 @@ async def test_execute_releases_lease_and_never_resubmits_provider(monkeypatch):
         yield object()
 
     async def ensure(*_args, **_kwargs):
-        return SimpleNamespace(AgentId="agent-9")
+        return SimpleNamespace(ownership_id="agent-9", provider_agent_id="agent-9")
 
     async def stream():
         provider_calls.append("submitted")
@@ -592,7 +592,7 @@ async def test_execute_releases_lease_and_never_resubmits_provider(monkeypatch):
     monkeypatch.setattr(turn_module, "db_connection", connection)
     monkeypatch.setattr(turn_module.WorkbenchRuntimeGuard, "acquire", acquire)
     monkeypatch.setattr(turn_module.WorkbenchRuntimeGuard, "release", release)
-    monkeypatch.setattr(turn_module.CoreAgent, "ensure_turn_limits", ensure)
+    monkeypatch.setattr(turn_module.CoreAgent, "ensure_runtime_principal", ensure)
     monkeypatch.setattr(turn_module.CoreChat, "message", lambda *_args, **_kwargs: stream())
     monkeypatch.setattr(turn_module.WorkbenchStreamGuard, "pump", pump)
     monkeypatch.setattr(
@@ -655,8 +655,12 @@ async def test_private_file_url_is_redacted_before_turn_event_persistence(monkey
     monkeypatch.setattr(turn_module.WorkbenchRuntimeGuard, "release", AsyncMock())
     monkeypatch.setattr(
         turn_module.CoreAgent,
-        "ensure_turn_limits",
-        AsyncMock(return_value=SimpleNamespace(AgentId="agent-9")),
+        "ensure_runtime_principal",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                ownership_id="agent-9", provider_agent_id="agent-9"
+            )
+        ),
     )
     monkeypatch.setattr(turn_module.CoreChat, "message", lambda *_args, **_kwargs: stream())
     monkeypatch.setattr(turn_module.WorkbenchStreamGuard, "pump", pump)
@@ -722,8 +726,12 @@ async def test_stream_without_completion_evidence_cannot_finalize_as_completed(m
     monkeypatch.setattr(turn_module.WorkbenchRuntimeGuard, "release", AsyncMock())
     monkeypatch.setattr(
         turn_module.CoreAgent,
-        "ensure_turn_limits",
-        AsyncMock(return_value=SimpleNamespace(AgentId="agent-9")),
+        "ensure_runtime_principal",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                ownership_id="agent-9", provider_agent_id="agent-9"
+            )
+        ),
     )
     monkeypatch.setattr(turn_module.CoreChat, "message", lambda *_args, **_kwargs: stream())
     monkeypatch.setattr(turn_module.WorkbenchStreamGuard, "pump", pump)
@@ -768,7 +776,7 @@ async def test_timeout_before_first_provider_event_is_unknown_and_releases_lease
         return lease
 
     async def ensure(*_args, **_kwargs):
-        return SimpleNamespace(AgentId="agent-9")
+        return SimpleNamespace(ownership_id="agent-9", provider_agent_id="agent-9")
 
     async def stream():
         yield b'data: {"Type":"response.completed"}\n\n'
@@ -779,7 +787,7 @@ async def test_timeout_before_first_provider_event_is_unknown_and_releases_lease
     monkeypatch.setattr(turn_module, "db_connection", connection)
     monkeypatch.setattr(turn_module.WorkbenchRuntimeGuard, "acquire", acquire)
     monkeypatch.setattr(turn_module.WorkbenchRuntimeGuard, "release", release)
-    monkeypatch.setattr(turn_module.CoreAgent, "ensure_turn_limits", ensure)
+    monkeypatch.setattr(turn_module.CoreAgent, "ensure_runtime_principal", ensure)
     monkeypatch.setattr(turn_module.CoreChat, "message", lambda *_args, **_kwargs: stream())
     monkeypatch.setattr(turn_module.WorkbenchStreamGuard, "pump", timeout)
     monkeypatch.setattr(WorkbenchTurnManager, "_set_running", AsyncMock())

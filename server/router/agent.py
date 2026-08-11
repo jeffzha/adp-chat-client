@@ -22,8 +22,11 @@ class AgentConfigApi(HTTPMethodView):
 
         if tagentic_config.WORKBENCH_MODE:
             context = request.ctx.workbench_context
-            application_id = request.ctx.workbench_app_context.application_id
-            if str(context.access_mode).strip().lower() == "active":
+            app_context = request.ctx.workbench_app_context
+            application_id = app_context.application_id
+            if not app_context.runtime.uses_provider_user_agent:
+                record = None
+            elif str(context.access_mode).strip().lower() == "active":
                 vendor_app = app.get_vendor_app(application_id)
                 try:
                     record = await CoreAgent.ensure(

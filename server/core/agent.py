@@ -2,6 +2,7 @@ import copy
 import hashlib
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Optional
 
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.agent import AgentConfig
 from model.workbench import WorkbenchAgentBinding, WorkbenchIdentity
-from core.workbench_control import WorkbenchIdentityContext
+from core.workbench_control import WorkbenchAppContext, WorkbenchIdentityContext
 from core.workbench_metrics import WORKBENCH_METRICS
 from core.workbench_resource_reporter import (
     WorkbenchResourceReporter,
@@ -25,7 +26,17 @@ class AgentProvisioningError(RuntimeError):
         self.status_code = status_code
 
 
+@dataclass(frozen=True)
+class WorkbenchRuntimePrincipal:
+    """Local ownership node plus the optional Tencent Kind=1 Agent."""
+
+    ownership_id: str
+    provider_agent_id: str | None
+
+
 class CoreAgent:
+    _LOCAL_RUNTIME_PREFIX = "wrp_"
+
     @staticmethod
     async def _lock_workbench_binding(
         db: AsyncSession,
@@ -224,6 +235,130 @@ class CoreAgent:
                 time.monotonic() - provision_started,
             )
         return record
+
+    @classmethod
+    async def ensure_runtime_principal(
+        cls,
+        db: AsyncSession,
+        account_id: str,
+        app_context: WorkbenchAppContext,
+        vendor_app: BaseVendor,
+        *,
+        max_output_tokens: int,
+        max_reasoning_rounds: int,
+        identity_context: WorkbenchIdentityContext,
+    ) -> WorkbenchRuntimePrincipal:
+        """Resolve the server-owned conversation parent for one runtime profile.
+
+        Dynamic Claw keeps the existing Kind=1 provisioning and verified Agent
+        limit path. Other profiles use an opaque local ownership principal. The
+        latter is deliberately never sent to Tencent and performs no provider
+        Agent operation.
+        """
+        if app_context.runtime.uses_provider_user_agent:
+            record = await cls.ensure_turn_limits(
+                db,
+                account_id,
+                app_context.application_id,
+                vendor_app,
+                max_output_tokens=max_output_tokens,
+                max_reasoning_rounds=max_reasoning_rounds,
+                identity_context=identity_context,
+            )
+            if str(record.AgentId).startswith(cls._LOCAL_RUNTIME_PREFIX):
+                raise AgentProvisioningError(
+                    "runtime profile changed and requires Agent reconciliation",
+                    409,
+                )
+            return WorkbenchRuntimePrincipal(
+                ownership_id=str(record.AgentId),
+                provider_agent_id=str(record.AgentId),
+            )
+
+        if (
+            identity_context.binding_id == ""
+            or identity_context.application_id != app_context.application_id
+            or str(identity_context.app_profile_id) != str(app_context.app_profile_id)
+            or int(identity_context.config_version) != int(app_context.config_version)
+        ):
+            raise AgentProvisioningError("exact runtime ownership context is required", 500)
+        identity = (
+            await db.execute(
+                select(WorkbenchIdentity)
+                .where(
+                    WorkbenchIdentity.AccountId == account_id,
+                    WorkbenchIdentity.Status == "active",
+                )
+                .with_for_update()
+            )
+        ).scalar()
+        if identity is None or identity.BindingId != identity_context.binding_id:
+            raise AgentProvisioningError("active workbench identity is required", 409)
+
+        digest = hashlib.sha256(
+            "\x00".join(
+                (
+                    identity_context.binding_id,
+                    app_context.application_id,
+                    str(app_context.app_profile_id),
+                    str(app_context.config_version),
+                    app_context.runtime_profile,
+                )
+            ).encode("utf-8")
+        ).hexdigest()[:48]
+        principal_id = cls._LOCAL_RUNTIME_PREFIX + digest
+        binding = await cls._lock_workbench_binding(
+            db,
+            account_id,
+            app_context.application_id,
+        )
+        record = await cls.get(db, account_id, app_context.application_id)
+        if binding is not None:
+            if (
+                binding.Status != "active"
+                or binding.AgentId != principal_id
+                or binding.AppProfileId != str(app_context.app_profile_id)
+                or int(binding.ConfigVersion or 0) != int(app_context.config_version)
+                or record is None
+                or record.AgentId != principal_id
+            ):
+                raise AgentProvisioningError(
+                    "runtime profile changed and requires Agent reconciliation",
+                    409,
+                )
+        else:
+            if record is not None:
+                raise AgentProvisioningError(
+                    "legacy Agent configuration requires reconciliation before runtime activation",
+                    409,
+                )
+            binding = WorkbenchAgentBinding(
+                BindingId=identity.BindingId,
+                AccountId=account_id,
+                ApplicationId=app_context.application_id,
+                AppProfileId=str(app_context.app_profile_id),
+                ConfigVersion=int(app_context.config_version),
+                AgentId=principal_id,
+                Status="active",
+                AttemptId=uuid.uuid4().hex,
+            )
+            record = AgentConfig(
+                AccountId=account_id,
+                ApplicationId=app_context.application_id,
+                AgentId=principal_id,
+            )
+            db.add(binding)
+            db.add(record)
+        await cls._report_workbench_agent(
+            db,
+            account_id=account_id,
+            identity_context=identity_context,
+            agent_id=principal_id,
+        )
+        return WorkbenchRuntimePrincipal(
+            ownership_id=principal_id,
+            provider_agent_id=None,
+        )
 
     @staticmethod
     async def _report_workbench_agent(

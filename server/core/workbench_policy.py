@@ -90,6 +90,11 @@ class WorkbenchPolicy:
         search_network: bool,
     ) -> dict[str, int]:
         cls.require_active(identity)
+        if not app_context.execution_enabled:
+            raise WorkbenchPolicyError(
+                "workbench runtime profile execution is not enabled",
+                503,
+            )
         cls.require_capability(app_context, "chat")
         limits = cls.validated_limits(app_context)
         capabilities = cls.capabilities(app_context)
@@ -121,6 +126,11 @@ class WorkbenchPolicy:
         task_max_runtime_seconds: int,
     ) -> dict[str, int]:
         cls.require_active(identity)
+        if not app_context.execution_enabled:
+            raise WorkbenchPolicyError(
+                "workbench runtime profile execution is not enabled",
+                503,
+            )
         cls.require_capability(app_context, "chat")
         cls.require_capability(app_context, "scheduled_tasks")
         limits = cls.validated_limits(app_context)
@@ -168,6 +178,11 @@ class WorkbenchPolicy:
         identity: WorkbenchIdentityContext,
         app_context: WorkbenchAppContext,
     ) -> None:
+        if not app_context.execution_enabled:
+            raise WorkbenchPolicyError(
+                "workbench runtime profile execution is not enabled",
+                503,
+            )
         # Conversation/application reads and per-user Agent provisioning are the
         # server-side mechanics of chat. Generic Agent mutation is separately a
         # tool capability and remains closed; only the trusted, serialized limit

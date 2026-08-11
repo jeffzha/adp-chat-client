@@ -86,6 +86,37 @@ async def test_tcadp_creates_provider_conversation_before_local_ownership(monkey
 
 
 @pytest.mark.asyncio
+async def test_tcadp_static_runtime_omits_agent_id_from_provider_creation(monkeypatch):
+    provider_conversation_id = "dd6a4e74-b2d4-463f-ba01-429304a4a142"
+    vendor = _vendor()
+    callback = _ConversationCallback([])
+    create_provider = AsyncMock(return_value={"ConversationId": provider_conversation_id})
+    monkeypatch.setattr(tagentic_config, "WORKBENCH_MODE", True)
+    monkeypatch.setattr(vendor, "forward_request", create_provider)
+
+    stream = vendor.chat(
+        "napi:prod:customer:7:user:9",
+        [{"Type": "text", "Text": "hello"}],
+        None,
+        True,
+        callback,
+        agent_id=None,
+    )
+    await anext(stream)
+    await stream.aclose()
+
+    create_provider.assert_awaited_once_with(
+        "CreateConversation",
+        {
+            "Type": 5,
+            "AppId": "provider-app-7",
+            "AppKey": "provider-app-key-secret",
+            "UserId": "napi:prod:customer:7:user:9",
+        },
+    )
+
+
+@pytest.mark.asyncio
 async def test_tcadp_does_not_persist_or_chat_when_provider_creation_fails(monkeypatch):
     vendor = _vendor()
     callback = _ConversationCallback([])
@@ -394,6 +425,111 @@ async def test_core_chat_persists_returned_provider_id_for_trusted_owner(monkeyp
         workbench_identity=identity,
         workbench_app_context=app_context,
         workbench_agent_id="agent-9",
+    )
+    assert messages == [provider_conversation_id.encode()]
+
+
+@pytest.mark.asyncio
+async def test_core_chat_keeps_local_ownership_without_sending_static_principal(
+    monkeypatch,
+):
+    provider_conversation_id = "dd6a4e74-b2d4-463f-ba01-429304a4a142"
+    db = object()
+
+    @asynccontextmanager
+    async def fake_db_connection():
+        yield db
+
+    class _Vendor:
+        application_id = "customer-app-7"
+
+        async def chat(
+            self,
+            _account_id,
+            _contents,
+            _conversation_id,
+            is_new,
+            callback,
+            **kwargs,
+        ):
+            assert is_new is True
+            assert kwargs["agent_id"] is None
+            conversation = await callback.create(
+                vendor_conversation_id=provider_conversation_id
+            )
+            yield str(conversation.Id).encode()
+
+    monkeypatch.setattr(tagentic_config, "WORKBENCH_MODE", True)
+    monkeypatch.setattr(chat_module, "db_connection", fake_db_connection)
+    monkeypatch.setattr(
+        CoreChat,
+        "resolve_vendor_account_id",
+        AsyncMock(return_value="napi:prod:customer:7:user:9"),
+    )
+    create = AsyncMock(return_value=_Conversation(provider_conversation_id))
+    monkeypatch.setattr(CoreConversation, "create", create)
+    identity = WorkbenchIdentityContext(
+        binding_id="binding-7",
+        canonical_subject="napi:prod:customer:7:user:9",
+        customer_id=7,
+        new_api_user_id=9,
+        auth_epoch=3,
+        display_name="User 9",
+        application_id="customer-app-7",
+        app_profile_id="7",
+        access_mode="active",
+        config_version=4,
+    )
+    app_context = WorkbenchAppContext(
+        application_id="customer-app-7",
+        app_profile_id="7",
+        config_version=4,
+        auth_epoch=3,
+        vendor="Tencent",
+        service_vendor="ChinaTencentCloud",
+        app_id="provider-app-7",
+        app_key="provider-secret",
+        space_id="space-7",
+        template_agent_id="",
+        secret_id="secret-id",
+        secret_key="secret-key",
+        capabilities=("chat",),
+        limits={},
+        provider_app_mode=1,
+        runtime_profile="standard_v2",
+        execution_enabled=False,
+    )
+
+    messages = [
+        item
+        async for item in CoreChat.message(
+            _Vendor(),
+            "account-9",
+            [{"Type": "text", "Text": "hello"}],
+            None,
+            True,
+            {},
+            workbench_limits={
+                "max_output_tokens": 8192,
+                "max_reasoning_rounds": 20,
+            },
+            workbench_turn_serialized=True,
+            workbench_agent_id="wrp_local-ownership",
+            workbench_send_agent_id=False,
+            workbench_identity=identity,
+            workbench_app_context=app_context,
+        )
+    ]
+
+    create.assert_awaited_once_with(
+        db,
+        "account-9",
+        "customer-app-7",
+        title="hello",
+        conversation_id=provider_conversation_id,
+        workbench_identity=identity,
+        workbench_app_context=app_context,
+        workbench_agent_id="wrp_local-ownership",
     )
     assert messages == [provider_conversation_id.encode()]
 

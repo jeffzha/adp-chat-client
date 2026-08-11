@@ -90,6 +90,9 @@ async def test_app_context_accepts_typed_sandbox_and_rejects_unknown_capability(
         purpose="interactive",
     )
     assert context.capabilities == ("chat", "sandbox")
+    assert context.runtime_profile == "claw_dynamic_v2"
+    assert context.provider_app_mode == 4
+    assert context.execution_enabled is True
 
     payload["capabilities"] = ["chat", "sandbox_everything"]
     with pytest.raises(WorkbenchControlError, match="capability is unknown"):
@@ -126,6 +129,118 @@ async def test_app_context_accepts_typed_sandbox_and_rejects_unknown_capability(
             purpose="interactive",
         )
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_app_mode", "runtime_profile"),
+    [
+        (1, "standard_v2"),
+        (2, "multi_agent_v2"),
+        (3, "workflow_v2"),
+        (4, "claw_static_v2"),
+    ],
+)
+async def test_unaccepted_runtime_profiles_are_typed_and_execution_disabled(
+    monkeypatch, provider_app_mode, runtime_profile
+):
+    payload = {
+        "application_id": "customer-app-7",
+        "app_profile_id": "17",
+        "config_version": 1,
+        "auth_epoch": 1,
+        "vendor": "Tencent",
+        "service_vendor": "ChinaTencentCloud",
+        "app_id": "provider-app-7",
+        "app_key": "app-key",
+        "space_id": "space-7",
+        "template_agent_id": "",
+        "secret_id": "secret-id",
+        "secret_key": "secret-key",
+        "provider_app_mode": provider_app_mode,
+        "runtime_profile": runtime_profile,
+        "execution_enabled": False,
+        "capabilities": ["chat"],
+        "limits": {
+            "customer_concurrency": 2,
+            "user_concurrency": 1,
+            "max_runtime_seconds": 600,
+            "max_reasoning_rounds": 20,
+            "max_output_tokens": 8192,
+            "web_search_per_turn": 0,
+            "max_file_bytes": 0,
+        },
+    }
+    monkeypatch.setattr(
+        WorkbenchControlClient, "_request", AsyncMock(return_value=payload)
+    )
+
+    context = await WorkbenchControlClient.get_app_context(
+        binding_id="binding-7",
+        canonical_subject="napi:prod:customer:7:user:9",
+        auth_epoch=1,
+        requested_app_profile_id=17,
+        requested_config_version=1,
+        purpose="interactive",
+    )
+
+    assert context.provider_app_mode == provider_app_mode
+    assert context.runtime_profile == runtime_profile
+    assert context.execution_enabled is False
+    assert context.runtime.uses_provider_user_agent is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value.pop("runtime_profile"),
+        lambda value: value.update(provider_app_mode=1, runtime_profile="workflow_v2"),
+        lambda value: value.update(provider_app_mode=5),
+        lambda value: value.update(execution_enabled=True),
+    ],
+)
+async def test_runtime_profile_contract_fails_closed(monkeypatch, mutation):
+    payload = {
+        "application_id": "customer-app-7",
+        "app_profile_id": "17",
+        "config_version": 1,
+        "auth_epoch": 1,
+        "vendor": "Tencent",
+        "service_vendor": "ChinaTencentCloud",
+        "app_id": "provider-app-7",
+        "app_key": "app-key",
+        "space_id": "space-7",
+        "template_agent_id": "",
+        "secret_id": "secret-id",
+        "secret_key": "secret-key",
+        "provider_app_mode": 1,
+        "runtime_profile": "standard_v2",
+        "execution_enabled": False,
+        "capabilities": ["chat"],
+        "limits": {
+            "customer_concurrency": 2,
+            "user_concurrency": 1,
+            "max_runtime_seconds": 600,
+            "max_reasoning_rounds": 20,
+            "max_output_tokens": 8192,
+            "web_search_per_turn": 0,
+            "max_file_bytes": 0,
+        },
+    }
+    mutation(payload)
+    monkeypatch.setattr(
+        WorkbenchControlClient, "_request", AsyncMock(return_value=payload)
+    )
+
+    with pytest.raises(WorkbenchControlError, match="runtime|execution|AppMode"):
+        await WorkbenchControlClient.get_app_context(
+            binding_id="binding-7",
+            canonical_subject="napi:prod:customer:7:user:9",
+            auth_epoch=1,
+            requested_app_profile_id=17,
+            requested_config_version=1,
+            purpose="interactive",
+        )
 
 @pytest.mark.asyncio
 async def test_app_context_request_is_exact_and_purpose_bound(monkeypatch):

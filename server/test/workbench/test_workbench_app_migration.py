@@ -19,6 +19,12 @@ from core.workbench_control import (
     WorkbenchControlClient,
     WorkbenchControlError,
 )
+from core.workbench_runtime_profile import (
+    CLAW_STATIC_V2,
+    MULTI_AGENT_V2,
+    STANDARD_V2,
+    WORKFLOW_V2,
+)
 
 
 class _ScalarResult:
@@ -29,7 +35,12 @@ class _ScalarResult:
         return self.value
 
 
-def _task() -> WorkbenchAppMigrationTask:
+def _task(
+    *,
+    provider_app_mode: int = 4,
+    runtime_profile: str = "claw_dynamic_v2",
+    execution_enabled: bool = True,
+) -> WorkbenchAppMigrationTask:
     provider = WorkbenchAppContext(
         application_id="target-app",
         app_profile_id="22",
@@ -43,6 +54,9 @@ def _task() -> WorkbenchAppMigrationTask:
         template_agent_id="template-1",
         secret_id="provider-secret-id",
         secret_key="provider-secret-key",
+        provider_app_mode=provider_app_mode,
+        runtime_profile=runtime_profile,
+        execution_enabled=execution_enabled,
     )
     return WorkbenchAppMigrationTask(
         migration_job_id="amj_1",
@@ -61,6 +75,9 @@ def _task() -> WorkbenchAppMigrationTask:
         mode="copy",
         known_target_agent_id="",
         provider=provider,
+        provider_app_mode=provider_app_mode,
+        runtime_profile=runtime_profile,
+        execution_enabled=execution_enabled,
     )
 
 
@@ -83,6 +100,9 @@ def _claim_envelope(task: WorkbenchAppMigrationTask) -> dict:
             "target_config_version": task.target_config_version,
             "target_config_fingerprint": task.target_config_fingerprint,
             "mode": task.mode,
+            "provider_app_mode": task.provider_app_mode,
+            "runtime_profile": task.runtime_profile,
+            "execution_enabled": task.execution_enabled,
             "provider": {
                 "vendor": task.provider.vendor,
                 "service_vendor": task.provider.service_vendor,
@@ -92,6 +112,9 @@ def _claim_envelope(task: WorkbenchAppMigrationTask) -> dict:
                 "template_agent_id": task.provider.template_agent_id,
                 "secret_id": task.provider.secret_id,
                 "secret_key": task.provider.secret_key,
+                "provider_app_mode": task.provider.provider_app_mode,
+                "runtime_profile": task.provider.runtime_profile,
+                "execution_enabled": task.provider.execution_enabled,
             },
         }
     }
@@ -130,6 +153,98 @@ async def test_signed_claim_contract_is_strict_and_task_repr_hides_credentials(
             worker_id="adp-blue",
             lease_seconds=60,
         )
+
+    mismatched = _claim_envelope(expected)
+    mismatched["task"]["provider"]["runtime_profile"] = CLAW_STATIC_V2
+    mismatched["task"]["provider"]["execution_enabled"] = False
+    monkeypatch.setattr(
+        WorkbenchControlClient,
+        "_request",
+        AsyncMock(return_value=mismatched),
+    )
+    with pytest.raises(WorkbenchControlError, match="failed validation"):
+        await WorkbenchControlClient.claim_app_migration_task(
+            worker_id="adp-blue",
+            lease_seconds=60,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_app_mode", "runtime_profile"),
+    (
+        (1, STANDARD_V2),
+        (2, MULTI_AGENT_V2),
+        (3, WORKFLOW_V2),
+        (4, CLAW_STATIC_V2),
+    ),
+)
+async def test_non_dynamic_migration_establishes_only_local_readiness(
+    monkeypatch,
+    provider_app_mode,
+    runtime_profile,
+):
+    task = _task(
+        provider_app_mode=provider_app_mode,
+        runtime_profile=runtime_profile,
+        execution_enabled=False,
+    )
+    binding = SimpleNamespace(
+        Status="provisioning",
+        AttemptId=task.attempt_id,
+        AgentId=None,
+        ErrorCode=None,
+    )
+    db = SimpleNamespace(
+        add=Mock(),
+        commit=AsyncMock(),
+        execute=AsyncMock(return_value=_ScalarResult(None)),
+    )
+    ensure_vendor = AsyncMock()
+    monkeypatch.setattr(
+        "core.workbench_app_migration.WorkbenchAppResolver.ensure_vendor",
+        ensure_vendor,
+    )
+    revoke = Mock()
+    monkeypatch.setattr(
+        "core.workbench_app_migration.WorkbenchAppResolver.revoke",
+        revoke,
+    )
+    provider_factory = Mock(side_effect=AssertionError("provider must not be used"))
+    monkeypatch.setattr(
+        "core.workbench_app_migration.TAgenticApp.get_app",
+        provider_factory,
+    )
+    monkeypatch.setattr(
+        WorkbenchAppMigrationWorker,
+        "_prepare_local_binding",
+        AsyncMock(return_value=(binding, None)),
+    )
+    monkeypatch.setattr(
+        WorkbenchAppMigrationWorker,
+        "_locked_binding",
+        AsyncMock(return_value=binding),
+    )
+    report = AsyncMock(return_value={})
+    monkeypatch.setattr(
+        WorkbenchControlClient,
+        "report_app_migration_task",
+        report,
+    )
+
+    await WorkbenchAppMigrationWorker.process_one(db, task)
+
+    provider_factory.assert_not_called()
+    ensure_vendor.assert_not_awaited()
+    assert binding.Status == "active"
+    assert binding.AgentId.startswith("wrp_")
+    assert len(binding.AgentId) == 52
+    assert report.await_args.kwargs == {
+        "status": "succeeded",
+        "target_agent_id": "",
+        "target_readback_hash": "",
+    }
+    revoke.assert_not_called()
 
 
 @pytest.mark.asyncio

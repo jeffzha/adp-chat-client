@@ -13,6 +13,11 @@ import ujson
 
 from config import tagentic_config
 from core.workbench_metrics import WORKBENCH_METRICS
+from core.workbench_runtime_profile import (
+    CLAW_DYNAMIC_V2,
+    WorkbenchRuntimeProfile,
+    validate_runtime_profile,
+)
 
 
 WORKBENCH_CAPABILITIES = frozenset(
@@ -65,6 +70,9 @@ WORKBENCH_APP_CONTEXT_OPTIONAL_FIELDS = frozenset(
         "provider_environment",
         "region",
         "expires_at",
+        "provider_app_mode",
+        "runtime_profile",
+        "execution_enabled",
     }
 )
 WORKBENCH_RESOURCE_BIND_RESPONSE_REQUIRED_FIELDS = frozenset(
@@ -119,6 +127,17 @@ class WorkbenchAppContext:
     secret_key: str
     capabilities: tuple[str, ...] = ()
     limits: dict[str, int] | None = None
+    provider_app_mode: int = 4
+    runtime_profile: str = CLAW_DYNAMIC_V2
+    execution_enabled: bool = True
+
+    @property
+    def runtime(self) -> WorkbenchRuntimeProfile:
+        return validate_runtime_profile(
+            self.provider_app_mode,
+            self.runtime_profile,
+            self.execution_enabled,
+        )
 
 
 @dataclass(frozen=True, repr=False)
@@ -139,6 +158,9 @@ class WorkbenchAppMigrationTask:
     mode: str
     known_target_agent_id: str
     provider: WorkbenchAppContext
+    provider_app_mode: int
+    runtime_profile: str
+    execution_enabled: bool
 
 
 class WorkbenchControlClient:
@@ -499,6 +521,22 @@ class WorkbenchControlClient:
             raise WorkbenchControlError("claw-control app context is incomplete")
         if set(data).difference(required | WORKBENCH_APP_CONTEXT_OPTIONAL_FIELDS):
             raise WorkbenchControlError("claw-control app context has unknown fields")
+        runtime_fields = {
+            "provider_app_mode",
+            "runtime_profile",
+            "execution_enabled",
+        }
+        present_runtime_fields = runtime_fields.intersection(data)
+        if present_runtime_fields and present_runtime_fields != runtime_fields:
+            raise WorkbenchControlError("claw-control runtime profile is incomplete")
+        try:
+            runtime = validate_runtime_profile(
+                data.get("provider_app_mode", 4),
+                data.get("runtime_profile", CLAW_DYNAMIC_V2),
+                data.get("execution_enabled", True),
+            )
+        except ValueError as error:
+            raise WorkbenchControlError(str(error)) from error
         try:
             config_version = int(data["config_version"])
             context_auth_epoch = int(data["auth_epoch"])
@@ -542,11 +580,24 @@ class WorkbenchControlClient:
         ):
             raise WorkbenchControlError("claw-control App limits are invalid")
         limits = {key: raw_limits[key] for key in limit_names}
+        required_nonempty_strings = {
+            "application_id",
+            "app_profile_id",
+            "vendor",
+            "service_vendor",
+            "app_id",
+            "app_key",
+            "space_id",
+            "secret_id",
+            "secret_key",
+        }
+        if runtime.uses_provider_user_agent:
+            required_nonempty_strings.add("template_agent_id")
         if (
             not capabilities
             or config_version <= 0
             or context_auth_epoch <= 0
-            or not all(string_values.values())
+            or any(not string_values[name] for name in required_nonempty_strings)
             or limits["customer_concurrency"] <= 0
             or limits["user_concurrency"] <= 0
             or limits["max_runtime_seconds"] <= 0
@@ -575,6 +626,9 @@ class WorkbenchControlClient:
             secret_key=string_values["secret_key"],
             capabilities=capabilities,
             limits=limits,
+            provider_app_mode=runtime.provider_app_mode,
+            runtime_profile=runtime.name,
+            execution_enabled=runtime.execution_enabled,
         )
 
     @classmethod
@@ -716,6 +770,9 @@ class WorkbenchControlClient:
             "target_config_fingerprint",
             "mode",
             "provider",
+            "provider_app_mode",
+            "runtime_profile",
+            "execution_enabled",
         }
         if not isinstance(raw, dict) or not required_task_fields.issubset(raw) or set(raw).difference(required_task_fields | {"known_target_agent_id"}):
             raise WorkbenchControlError("migration task response is invalid", 502)
@@ -729,6 +786,9 @@ class WorkbenchControlClient:
             "template_agent_id",
             "secret_id",
             "secret_key",
+            "provider_app_mode",
+            "runtime_profile",
+            "execution_enabled",
         }:
             raise WorkbenchControlError("migration provider context is invalid", 502)
         string_fields = (
@@ -746,12 +806,35 @@ class WorkbenchControlClient:
         values = {name: str(raw.get(name) or "").strip() for name in string_fields}
         known_target_agent_id = str(raw.get("known_target_agent_id") or "").strip()
         provider_values = {
-            name: str(provider.get(name) or "").strip() for name in provider
+            name: str(provider.get(name) or "").strip()
+            for name in (
+                "vendor",
+                "service_vendor",
+                "app_id",
+                "app_key",
+                "space_id",
+                "template_agent_id",
+                "secret_id",
+                "secret_key",
+            )
         }
         try:
             customer_id = int(raw["customer_id"])
             app_profile_id = int(raw["target_app_profile_id"])
             config_version = int(raw["target_config_version"])
+            runtime_profile = str(raw["runtime_profile"]).strip()
+            provider_app_mode = raw["provider_app_mode"]
+            execution_enabled = raw["execution_enabled"]
+            runtime = validate_runtime_profile(
+                provider_app_mode,
+                runtime_profile,
+                execution_enabled,
+            )
+            provider_runtime = validate_runtime_profile(
+                provider["provider_app_mode"],
+                provider["runtime_profile"],
+                provider["execution_enabled"],
+            )
             lease_expires_at = datetime.fromisoformat(
                 str(raw["lease_expires_at"]).replace("Z", "+00:00")
             ).astimezone(UTC)
@@ -762,7 +845,11 @@ class WorkbenchControlClient:
             or app_profile_id <= 0
             or config_version <= 0
             or any(not value for value in values.values())
-            or any(not value for value in provider_values.values())
+            or any(
+                not value
+                for name, value in provider_values.items()
+                if name != "template_agent_id"
+            )
             or provider_values["vendor"] != "Tencent"
             or provider_values["service_vendor"] != "ChinaTencentADP"
             or provider_values["app_id"] != values["target_application_id"]
@@ -770,8 +857,25 @@ class WorkbenchControlClient:
             or len(values["target_config_fingerprint"]) != 71
             or len(values["lease_token"]) != 64
             or values["mode"] not in {"copy", "readback"}
-            or (values["mode"] == "copy" and known_target_agent_id != "")
-            or (values["mode"] == "readback" and not known_target_agent_id)
+            or runtime != provider_runtime
+            or (
+                runtime.uses_provider_user_agent
+                and not provider_values["template_agent_id"]
+            )
+            or (
+                runtime.uses_provider_user_agent
+                and values["mode"] == "copy"
+                and known_target_agent_id != ""
+            )
+            or (
+                runtime.uses_provider_user_agent
+                and values["mode"] == "readback"
+                and not known_target_agent_id
+            )
+            or (
+                not runtime.uses_provider_user_agent
+                and (values["mode"] != "copy" or known_target_agent_id != "")
+            )
             or len(known_target_agent_id) > 128
             or any(
                 character not in "0123456789abcdef"
@@ -795,6 +899,9 @@ class WorkbenchControlClient:
             template_agent_id=provider_values["template_agent_id"],
             secret_id=provider_values["secret_id"],
             secret_key=provider_values["secret_key"],
+            provider_app_mode=runtime.provider_app_mode,
+            runtime_profile=runtime.name,
+            execution_enabled=runtime.execution_enabled,
         )
         return WorkbenchAppMigrationTask(
             migration_job_id=values["migration_job_id"],
@@ -813,6 +920,9 @@ class WorkbenchControlClient:
             mode=values["mode"],
             known_target_agent_id=known_target_agent_id,
             provider=app_context,
+            provider_app_mode=runtime.provider_app_mode,
+            runtime_profile=runtime.name,
+            execution_enabled=runtime.execution_enabled,
         )
 
     @classmethod

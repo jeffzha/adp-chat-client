@@ -664,10 +664,10 @@ class WorkbenchTurnManager:
                 operation="chat",
             )
             async with db_connection() as db:
-                agent = await CoreAgent.ensure_turn_limits(
+                runtime_principal = await CoreAgent.ensure_runtime_principal(
                     db,
                     account_id,
-                    app_context.application_id,
+                    app_context,
                     vendor_app,
                     max_output_tokens=limits["max_output_tokens"],
                     max_reasoning_rounds=limits["max_reasoning_rounds"],
@@ -705,7 +705,10 @@ class WorkbenchTurnManager:
                 is_channel=False,
                 workbench_limits=limits,
                 workbench_turn_serialized=True,
-                workbench_agent_id=agent.AgentId,
+                workbench_agent_id=runtime_principal.ownership_id,
+                workbench_send_agent_id=(
+                    runtime_principal.provider_agent_id is not None
+                ),
                 workbench_identity=identity,
                 workbench_app_context=app_context,
                 workbench_evidence_callback=capture_usage_evidence,
