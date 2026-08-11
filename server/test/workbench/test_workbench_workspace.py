@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import patch
@@ -675,11 +676,9 @@ async def test_owned_workspace_download_uses_encrypted_provider_locator(
     streaming = response["streaming_fn"](
         SimpleNamespace(write=AsyncMock(side_effect=lambda chunk: written.append(chunk)))
     )
-    if close_error is None:
-        await streaming
-    else:
-        with pytest.raises(RuntimeError, match="close failed"):
-            await streaming
+    # Provider cleanup failures are bounded and projected as an unknown cleanup
+    # outcome; they must not leak the provider exception or retain the lease.
+    await streaming
     assert b"".join(written) == b"safe report"
     resolver.assert_awaited_once_with(
         request.ctx.db,
@@ -703,6 +702,150 @@ async def test_owned_workspace_download_uses_encrypted_provider_locator(
         timeout_seconds=max(1, lease.max_runtime_seconds - 1),
     )
     provider_stream.close.assert_awaited_once_with()
+    release.assert_awaited_once_with(lease)
+
+
+@pytest.mark.asyncio
+async def test_workspace_download_setup_cleanup_releases_lease_when_close_fails(
+    monkeypatch,
+):
+    class _BrokenStream:
+        content_type = "text/plain"
+        close = AsyncMock(side_effect=RuntimeError("close failed"))
+
+        @property
+        def file_name(self):
+            raise ValueError("invalid provider filename")
+
+    open_stream = AsyncMock(return_value=_BrokenStream())
+
+    class _FakeApp:
+        def add_route(self, *_args, **_kwargs):
+            return None
+
+        def get_vendor_app(self, _application_id):
+            return SimpleNamespace(open_file_stream=open_stream)
+
+    class _Parser:
+        def add_argument(self, *_args, **_kwargs):
+            return None
+
+        def parse_args(self, _request):
+            return {
+                "ApplicationId": "customer-app-7",
+                "AppId": "customer-app-7",
+                "WorkspaceId": "ww_owned",
+                "Path": "/workdir/report.txt",
+            }
+
+    sys.modules.pop("router.file_download", None)
+    with patch("app_factory.TAgenticApp.get_app", return_value=_FakeApp()):
+        file_download = importlib.import_module("router.file_download")
+    monkeypatch.setattr(tagentic_config, "WORKBENCH_MODE", True)
+    monkeypatch.setattr(file_download.reqparse, "RequestParser", _Parser)
+    monkeypatch.setattr(
+        file_download.WorkbenchPolicy,
+        "validate_file_read",
+        lambda _context: {"max_file_bytes": 1024},
+    )
+    monkeypatch.setattr(
+        file_download.CoreWorkbenchWorkspace,
+        "resolve_provider_locator",
+        AsyncMock(return_value=(SimpleNamespace(), "provider-workspace")),
+    )
+    lease = SimpleNamespace(max_runtime_seconds=60)
+    release = AsyncMock()
+    monkeypatch.setattr(
+        file_download.WorkbenchRuntimeGuard,
+        "acquire",
+        AsyncMock(return_value=lease),
+    )
+    monkeypatch.setattr(file_download.WorkbenchRuntimeGuard, "release", release)
+    request = SimpleNamespace(
+        args={},
+        ctx=SimpleNamespace(
+            db=object(),
+            account_id=ACCOUNT_ID,
+            session_claims={"exp": 4102444800},
+            workbench_context=_identity(),
+            workbench_app_context=_app_context(),
+        ),
+    )
+
+    with pytest.raises(SanicException, match="provider file download failed") as raised:
+        await file_download.FileDownloadApi.get.__wrapped__(
+            file_download.FileDownloadApi(),
+            request,
+        )
+
+    assert raised.value.status_code == 502
+    _BrokenStream.close.assert_awaited_once_with()
+    release.assert_awaited_once_with(lease)
+
+
+@pytest.mark.asyncio
+async def test_workspace_download_setup_cancellation_releases_lease(monkeypatch):
+    open_stream = AsyncMock(side_effect=asyncio.CancelledError())
+
+    class _FakeApp:
+        def add_route(self, *_args, **_kwargs):
+            return None
+
+        def get_vendor_app(self, _application_id):
+            return SimpleNamespace(open_file_stream=open_stream)
+
+    class _Parser:
+        def add_argument(self, *_args, **_kwargs):
+            return None
+
+        def parse_args(self, _request):
+            return {
+                "ApplicationId": "customer-app-7",
+                "AppId": "customer-app-7",
+                "WorkspaceId": "ww_owned",
+                "Path": "/workdir/report.txt",
+            }
+
+    sys.modules.pop("router.file_download", None)
+    with patch("app_factory.TAgenticApp.get_app", return_value=_FakeApp()):
+        file_download = importlib.import_module("router.file_download")
+    monkeypatch.setattr(tagentic_config, "WORKBENCH_MODE", True)
+    monkeypatch.setattr(file_download.reqparse, "RequestParser", _Parser)
+    monkeypatch.setattr(
+        file_download.WorkbenchPolicy,
+        "validate_file_read",
+        lambda _context: {"max_file_bytes": 1024},
+    )
+    monkeypatch.setattr(
+        file_download.CoreWorkbenchWorkspace,
+        "resolve_provider_locator",
+        AsyncMock(return_value=(SimpleNamespace(), "provider-workspace")),
+    )
+    lease = SimpleNamespace(max_runtime_seconds=60)
+    release = AsyncMock()
+    monkeypatch.setattr(
+        file_download.WorkbenchRuntimeGuard,
+        "acquire",
+        AsyncMock(return_value=lease),
+    )
+    monkeypatch.setattr(file_download.WorkbenchRuntimeGuard, "release", release)
+    request = SimpleNamespace(
+        args={},
+        ctx=SimpleNamespace(
+            db=object(),
+            account_id=ACCOUNT_ID,
+            session_claims={"exp": 4102444800},
+            workbench_context=_identity(),
+            workbench_app_context=_app_context(),
+        ),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await file_download.FileDownloadApi.get.__wrapped__(
+            file_download.FileDownloadApi(),
+            request,
+        )
+
     release.assert_awaited_once_with(lease)
 
 

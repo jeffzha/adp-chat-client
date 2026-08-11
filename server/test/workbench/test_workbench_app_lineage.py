@@ -183,3 +183,121 @@ async def test_history_union_is_exact_to_active_lineage_customer_and_binding():
             _app_context(),
         )
     assert hidden.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_history_union_follows_multi_hop_active_lineage_without_making_it_mutable():
+    engine = create_engine("sqlite://")
+    for table in (
+        ChatConversation.__table__,
+        WorkbenchWorkspace.__table__,
+        WorkbenchConversationWorkspace.__table__,
+        WorkbenchAppLineage.__table__,
+    ):
+        table.create(engine)
+    session = sessionmaker(engine, expire_on_commit=False)()
+    account_id = uuid4()
+    oldest_id = uuid4()
+    session.add_all(
+        (
+            WorkbenchAppLineage(
+                Id=uuid4(),
+                LineageId="lin_a_b",
+                EventKey="app-migration-cutover:a:b",
+                CustomerId=7,
+                MigrationJobId="mig_a_b",
+                SourceApplicationId="oldest-app",
+                SourceProviderAppId="oldest-provider-app",
+                SourceAppProfileId=10,
+                SourceConfigVersion=2,
+                TargetApplicationId="source-app",
+                TargetProviderAppId="source-provider-app",
+                TargetAppProfileId=11,
+                TargetConfigVersion=3,
+                MigrationConfigFingerprint="sha256:a-b",
+                Status="active",
+                ActivatedAt=datetime(2026, 8, 9),
+            ),
+            WorkbenchAppLineage(
+                Id=uuid4(),
+                LineageId="lin_b_c",
+                EventKey="app-migration-cutover:b:c",
+                CustomerId=7,
+                MigrationJobId="mig_b_c",
+                SourceApplicationId="source-app",
+                SourceProviderAppId="source-provider-app",
+                SourceAppProfileId=11,
+                SourceConfigVersion=3,
+                TargetApplicationId="target-app",
+                TargetProviderAppId="target-provider-app",
+                TargetAppProfileId=22,
+                TargetConfigVersion=4,
+                MigrationConfigFingerprint="sha256:b-c",
+                Status="active",
+                ActivatedAt=datetime(2026, 8, 10),
+            ),
+        )
+    )
+    workspace_id = f"ws-{oldest_id.hex}"
+    session.add(
+        ChatConversation(
+            Id=oldest_id,
+            AccountId=account_id,
+            ApplicationId="oldest-app",
+            Title="oldest",
+        )
+    )
+    session.add(
+        WorkbenchWorkspace(
+            Id=uuid4(),
+            WorkspaceId=workspace_id,
+            ConversationId=oldest_id,
+            BindingId="binding-1",
+            AccountId=account_id,
+            CustomerId=7,
+            ApplicationId="oldest-app",
+            ProviderAppId="oldest-provider-app",
+            AppProfileId="10",
+            ConfigVersion=2,
+            Status="active",
+        )
+    )
+    session.add(
+        WorkbenchConversationWorkspace(
+            Id=uuid4(),
+            ConversationId=oldest_id,
+            WorkspaceId=workspace_id,
+            BindingId="binding-1",
+            AccountId=account_id,
+            CustomerId=7,
+            ApplicationId="oldest-app",
+            ProviderAppId="oldest-provider-app",
+            AppProfileId="10",
+            ConfigVersion=2,
+            AgentId="historical-agent",
+            Status="active",
+        )
+    )
+    session.commit()
+    db = _AsyncSessionAdapter(session)
+
+    assert {
+        str(item.Id)
+        for item in await CoreConversation.list(
+            db,
+            account_id,
+            workbench_identity=_identity(),
+            workbench_app_context=_app_context(),
+        )
+    } == {str(oldest_id)}
+    assert (
+        await CoreConversation.get_owned(
+            db,
+            account_id,
+            "oldest-app",
+            oldest_id,
+            workbench_identity=_identity(),
+            workbench_app_context=_app_context(),
+        )
+        is None
+    )

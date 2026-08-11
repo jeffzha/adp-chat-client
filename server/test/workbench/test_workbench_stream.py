@@ -34,6 +34,37 @@ class _SilentStream:
 
 
 @pytest.mark.asyncio
+async def test_invalid_stream_setup_still_closes_upstream_and_releases_lease(
+    monkeypatch,
+):
+    upstream = _SilentStream()
+    lease = object()
+    release = AsyncMock()
+    monkeypatch.setattr(stream_module.WorkbenchRuntimeGuard, "release", release)
+
+    with pytest.raises(
+        WorkbenchStreamReauthorizationError,
+        match="interval is invalid",
+    ):
+        await WorkbenchStreamGuard.pump(
+            upstream,
+            AsyncMock(),
+            claims={},
+            method="POST",
+            resource_path="/chat/message",
+            application_id="customer-app-7",
+            app_profile_id="profile-7",
+            config_version=4,
+            lease=lease,
+            max_runtime_seconds=60,
+            reauthorization_interval_seconds=0,
+        )
+
+    assert upstream.closed is True
+    release.assert_awaited_once_with(lease)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("resource_path", ["/chat/message", "/file/parse"])
 async def test_silent_workbench_stream_revocation_closes_upstream_and_releases_lease(
     monkeypatch,

@@ -56,6 +56,16 @@ instantiating a provider client or calling `CopyAgentFromApp` or
 `target_agent_id` and `target_readback_hash`; readiness is represented by the
 signed target profile/config tuple and the active local ownership binding.
 
+Historical App migrations are traversed transitively by exact signed
+Application/provider-App/profile/config tuples, so an A to B to C migration
+keeps A and B conversations readable from C. Current binding, account, and
+customer ownership filters still apply, and historical tuples remain excluded
+from every mutation and new-Turn ownership check. A `history_read` App context
+must carry an explicit source runtime triple with `execution_enabled=false`;
+omitting it is rejected instead of being interpreted as an executable dynamic
+Claw context. Provider history uses the canonical user subject used when the
+Conversation was created, never the local shadow-account UUID.
+
 ## Enabling another profile
 
 Code support does not authorize provider execution. Before adding a profile to

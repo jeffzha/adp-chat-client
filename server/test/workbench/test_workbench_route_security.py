@@ -634,7 +634,10 @@ async def test_workbench_history_always_uses_v2_and_never_legacy_fallback(monkey
             db=object(),
             account_id="account-9",
             apps_info=[],
-            workbench_context=SimpleNamespace(access_mode="active"),
+            workbench_context=SimpleNamespace(
+                access_mode="active",
+                canonical_subject="napi:prod:customer:7:user:9",
+            ),
             workbench_app_context=SimpleNamespace(
                 application_id="customer-app-7",
                 capabilities=("chat",),
@@ -645,6 +648,11 @@ async def test_workbench_history_always_uses_v2_and_never_legacy_fallback(monkey
     response = await chat_router.ChatMessageListApi().get(request)
 
     assert response.status == 200
-    vendor.get_messages_v2.assert_awaited_once()
+    assert vendor.get_messages_v2.await_args.args[1:] == (
+        "napi:prod:customer:7:user:9",
+        "conversation-1",
+        100,
+        None,
+    )
     vendor.get_messages.assert_not_awaited()
     vendor.get_info.assert_not_awaited()

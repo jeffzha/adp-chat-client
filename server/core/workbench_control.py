@@ -529,6 +529,11 @@ class WorkbenchControlClient:
         present_runtime_fields = runtime_fields.intersection(data)
         if present_runtime_fields and present_runtime_fields != runtime_fields:
             raise WorkbenchControlError("claw-control runtime profile is incomplete")
+        if purpose == "history_read" and present_runtime_fields != runtime_fields:
+            raise WorkbenchControlError(
+                "historical App runtime profile is required",
+                502,
+            )
         try:
             runtime = validate_runtime_profile(
                 data.get("provider_app_mode", 4),
@@ -537,6 +542,11 @@ class WorkbenchControlClient:
             )
         except ValueError as error:
             raise WorkbenchControlError(str(error)) from error
+        if purpose == "history_read" and runtime.execution_enabled:
+            raise WorkbenchControlError(
+                "historical App context must be read-only",
+                502,
+            )
         try:
             config_version = int(data["config_version"])
             context_auth_epoch = int(data["auth_epoch"])

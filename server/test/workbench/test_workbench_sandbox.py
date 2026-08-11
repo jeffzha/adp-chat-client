@@ -1040,6 +1040,66 @@ async def test_safety_stop_reloads_and_retries_after_a_cas_race(
 
 
 @pytest.mark.asyncio
+async def test_safety_stop_after_repeated_cas_conflicts_is_bounded_and_audited(
+    sandbox_store,
+    monkeypatch,
+):
+    provider = _FakeProvider()
+    created = await _create(sandbox_store, provider)
+    stop_started = asyncio.Event()
+
+    async def hanging_stop(instance_id):
+        provider.stop_calls.append(instance_id)
+        stop_started.set()
+        await asyncio.Event().wait()
+
+    provider.stop = hanging_stop
+
+    async def always_conflict(cls, *_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(
+        tagentic_config,
+        "WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS",
+        0.01,
+    )
+    monkeypatch.setattr(
+        WorkbenchSandboxService,
+        "_cas_transition",
+        classmethod(always_conflict),
+    )
+
+    with sandbox_store() as session:
+        row = session.execute(
+            select(WorkbenchSandbox).where(
+                WorkbenchSandbox.SandboxId == created["sandbox_id"]
+            )
+        ).scalar_one()
+        await WorkbenchSandboxService._bounded_stop(
+            _AsyncSessionAdapter(session),
+            row,
+            provider,
+            event_type="output_limit",
+            error_code="output_limit_exceeded",
+        )
+
+    assert stop_started.is_set()
+    assert provider.stop_calls == ["provider-instance-1"]
+    with sandbox_store() as session:
+        row = session.execute(select(WorkbenchSandbox)).scalar_one()
+        audit = session.execute(
+            select(WorkbenchSandboxAudit).where(
+                WorkbenchSandboxAudit.EventType == "output_limit"
+            )
+        ).scalar_one()
+        assert row.Status == "provider_unknown"
+        assert row.LeaseOwner is None
+        assert row.LeaseUntil is None
+        assert audit.Outcome == "unknown"
+        assert audit.ErrorCode == "output_limit_exceeded"
+
+
+@pytest.mark.asyncio
 async def test_code_execution_is_separately_disabled_before_provider_use(
     sandbox_store,
     monkeypatch,

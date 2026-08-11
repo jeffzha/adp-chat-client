@@ -566,6 +566,7 @@ async def test_execute_releases_lease_and_never_resubmits_provider(monkeypatch):
     finalize = AsyncMock()
     append = AsyncMock()
     provider_calls = []
+    pump_options = {}
 
     async def acquire(**_kwargs):
         return lease
@@ -584,7 +585,8 @@ async def test_execute_releases_lease_and_never_resubmits_provider(monkeypatch):
     async def message(*_args, **_kwargs):
         return stream()
 
-    async def pump(upstream, write, **_kwargs):
+    async def pump(upstream, write, **kwargs):
+        pump_options.update(kwargs)
         async for item in upstream:
             await write(item)
         await release(lease)
@@ -619,6 +621,7 @@ async def test_execute_releases_lease_and_never_resubmits_provider(monkeypatch):
     )
 
     assert provider_calls == ["submitted"]
+    assert pump_options["drain_after_reauthorization_failure"] is True
     append.assert_awaited_once()
     finalize.assert_awaited_once_with("turn-1", "completed")
     release.assert_any_await(lease)

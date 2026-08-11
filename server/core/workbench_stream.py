@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from config import tagentic_config
+from core.workbench_async_cleanup import bounded_cleanup
 from core.workbench_identity import CoreWorkbenchIdentity
 from core.workbench_runtime import RuntimeLease, WorkbenchRuntimeGuard
 from util.database import db_connection
@@ -93,11 +94,28 @@ class WorkbenchStreamGuard:
             else tagentic_config.WORKBENCH_STREAM_REAUTH_SECONDS
         )
         if interval <= 0:
+            try:
+                await bounded_cleanup(
+                    upstream.aclose,
+                    timeout_seconds=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
+                )
+            finally:
+                await WorkbenchRuntimeGuard.release(lease)
             raise WorkbenchStreamReauthorizationError(
                 "workbench stream reauthorization interval is invalid"
             )
 
-        next_item = asyncio.create_task(anext(upstream))
+        try:
+            next_item = asyncio.create_task(anext(upstream))
+        except BaseException:
+            try:
+                await bounded_cleanup(
+                    upstream.aclose,
+                    timeout_seconds=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
+                )
+            finally:
+                await WorkbenchRuntimeGuard.release(lease)
+            raise
         next_reauthorization = monotonic() + interval
         try:
             async with asyncio.timeout(max_runtime_seconds):
@@ -143,8 +161,14 @@ class WorkbenchStreamGuard:
         finally:
             if not next_item.done():
                 next_item.cancel()
-            await asyncio.gather(next_item, return_exceptions=True)
+            await bounded_cleanup(
+                next_item,
+                timeout_seconds=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
+            )
             try:
-                await upstream.aclose()
+                await bounded_cleanup(
+                    upstream.aclose,
+                    timeout_seconds=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
+                )
             finally:
                 await WorkbenchRuntimeGuard.release(lease)

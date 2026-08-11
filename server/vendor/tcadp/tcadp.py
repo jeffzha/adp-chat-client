@@ -1023,7 +1023,7 @@ class TCADP(BaseVendor):
     async def get_messages_v2(
         self,
         db: AsyncSession,
-        account_id: str,
+        user_id: str,
         conversation_id: str,
         limit: int,
         last_record_id: str = None
@@ -1038,7 +1038,7 @@ class TCADP(BaseVendor):
             "ConversationId": conversation_id,
             "Limit": limit,
             "Type": 5,
-            "UserId": account_id,
+            "UserId": user_id,
             "AppKey": self.config['AppKey'],
             "RecordQueryDirection": 1,
         }

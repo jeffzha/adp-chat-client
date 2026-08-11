@@ -86,24 +86,55 @@ class WorkbenchAppLineageStore:
 
     @staticmethod
     async def readable_source_tuples(db, identity, current_app_context) -> tuple[tuple[str, str, str, int], ...]:
-        rows = (
-            await db.execute(
-                select(WorkbenchAppLineage).where(
-                    WorkbenchAppLineage.CustomerId == identity.customer_id,
-                    WorkbenchAppLineage.TargetApplicationId == current_app_context.application_id,
-                    WorkbenchAppLineage.TargetProviderAppId == current_app_context.app_id,
-                    WorkbenchAppLineage.TargetAppProfileId == int(current_app_context.app_profile_id),
-                    WorkbenchAppLineage.TargetConfigVersion == int(current_app_context.config_version),
-                    WorkbenchAppLineage.Status == "active",
-                )
-            )
-        ).scalars()
-        return tuple(
+        rows = tuple(
             (
+                await db.execute(
+                    select(WorkbenchAppLineage)
+                    .where(
+                        WorkbenchAppLineage.CustomerId == identity.customer_id,
+                        WorkbenchAppLineage.Status == "active",
+                    )
+                    .order_by(
+                        WorkbenchAppLineage.ActivatedAt.desc(),
+                        WorkbenchAppLineage.LineageId.asc(),
+                    )
+                )
+            ).scalars()
+        )
+        predecessors: dict[
+            tuple[str, str, str, int],
+            list[tuple[str, str, str, int]],
+        ] = {}
+        for row in rows:
+            target = (
+                row.TargetApplicationId,
+                row.TargetProviderAppId,
+                str(row.TargetAppProfileId),
+                int(row.TargetConfigVersion),
+            )
+            source = (
                 row.SourceApplicationId,
                 row.SourceProviderAppId,
                 str(row.SourceAppProfileId),
                 int(row.SourceConfigVersion),
             )
-            for row in rows
+            predecessors.setdefault(target, []).append(source)
+
+        current = (
+            current_app_context.application_id,
+            current_app_context.app_id,
+            str(current_app_context.app_profile_id),
+            int(current_app_context.config_version),
         )
+        visited = {current}
+        frontier = [current]
+        readable: list[tuple[str, str, str, int]] = []
+        while frontier:
+            target = frontier.pop(0)
+            for source in predecessors.get(target, ()):
+                if source in visited:
+                    continue
+                visited.add(source)
+                readable.append(source)
+                frontier.append(source)
+        return tuple(readable)

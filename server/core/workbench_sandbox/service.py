@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import tagentic_config
+from core.workbench_async_cleanup import bounded_cleanup
 from core.workbench_control import WorkbenchAppContext, WorkbenchIdentityContext
 from core.workbench_identity import CoreWorkbenchIdentity, WorkbenchIdentityError
 from core.workbench_policy import WorkbenchPolicy
@@ -1110,23 +1111,33 @@ class WorkbenchSandboxService:
             # A safety stop must not disappear merely because a status refresh won
             # several consecutive CAS races.  The provider locator was re-read and
             # matched on every retry, so stopping it remains scoped to this row.
-            await provider.stop(provider_instance_id)
+            status, outcome = await cls._provider_stop_outcome(
+                provider,
+                provider_instance_id,
+            )
+            previous = sandbox.Status
+            sandbox.Status = status
+            sandbox.ErrorCode = error_code[:64]
+            sandbox.LeaseOwner = None
+            sandbox.LeaseUntil = None
+            sandbox.Version = int(sandbox.Version) + 1
+            cls._audit(
+                db,
+                sandbox,
+                event_type=event_type,
+                outcome=outcome,
+                status_from=previous,
+                status_to=status,
+                error_code=error_code,
+            )
+            db.add(sandbox)
+            await db.commit()
             return
         expected_version += 1
-        outcome = "accepted"
-        status = "stopping"
-        stop_task = asyncio.create_task(provider.stop(sandbox.ProviderInstanceId))
-        try:
-            await asyncio.wait_for(
-                asyncio.shield(stop_task),
-                timeout=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
-            )
-        except (SandboxProviderError, TimeoutError, asyncio.CancelledError):
-            status = "provider_unknown"
-            outcome = "unknown"
-            if not stop_task.done():
-                stop_task.cancel()
-            await asyncio.gather(stop_task, return_exceptions=True)
+        status, outcome = await cls._provider_stop_outcome(
+            provider,
+            sandbox.ProviderInstanceId,
+        )
         await cls._cas_transition(
             db,
             sandbox,
@@ -1141,6 +1152,18 @@ class WorkbenchSandboxService:
             outcome=outcome,
             error_code=error_code,
         )
+
+    @staticmethod
+    async def _provider_stop_outcome(
+        provider: ManagedSandboxProvider,
+        provider_instance_id: str,
+    ) -> tuple[str, str]:
+        if await bounded_cleanup(
+            lambda: provider.stop(provider_instance_id),
+            timeout_seconds=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
+        ):
+            return "stopping", "accepted"
+        return "provider_unknown", "unknown"
 
     @classmethod
     async def _bounded_stream_stop(
@@ -1544,18 +1567,10 @@ class WorkbenchSandboxService:
             except asyncio.CancelledError:
                 raise
             finally:
-                close_failed = False
-                close_task = asyncio.create_task(upstream.aclose())
-                try:
-                    await asyncio.wait_for(
-                        asyncio.shield(close_task),
-                        timeout=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
-                    )
-                except (Exception, asyncio.CancelledError):
-                    close_failed = True
-                    if not close_task.done():
-                        close_task.cancel()
-                    await asyncio.gather(close_task, return_exceptions=True)
+                close_failed = not await bounded_cleanup(
+                    upstream.aclose,
+                    timeout_seconds=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
+                )
                 if not completed or close_failed:
                     await cls._bounded_stream_stop(
                         sandbox_id=sandbox.SandboxId,

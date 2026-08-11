@@ -242,6 +242,83 @@ async def test_runtime_profile_contract_fails_closed(monkeypatch, mutation):
             purpose="interactive",
         )
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "runtime_fields",
+    [
+        {},
+        {
+            "provider_app_mode": 4,
+            "runtime_profile": "claw_dynamic_v2",
+            "execution_enabled": True,
+        },
+    ],
+)
+async def test_history_context_requires_explicit_disabled_source_runtime(
+    monkeypatch,
+    runtime_fields,
+):
+    payload = {
+        "application_id": "historical-app",
+        "app_profile_id": "11",
+        "config_version": 3,
+        "auth_epoch": 1,
+        "vendor": "Tencent",
+        "service_vendor": "ChinaTencentADP",
+        "app_id": "historical-provider-app",
+        "app_key": "app-key",
+        "space_id": "space-7",
+        "template_agent_id": "template-7",
+        "secret_id": "secret-id",
+        "secret_key": "secret-key",
+        "capabilities": ["chat"],
+        "limits": {
+            "customer_concurrency": 2,
+            "user_concurrency": 1,
+            "max_runtime_seconds": 600,
+            "max_reasoning_rounds": 20,
+            "max_output_tokens": 8192,
+            "web_search_per_turn": 0,
+            "max_file_bytes": 0,
+        },
+        **runtime_fields,
+    }
+    monkeypatch.setattr(
+        WorkbenchControlClient,
+        "_request",
+        AsyncMock(return_value=payload),
+    )
+
+    with pytest.raises(WorkbenchControlError, match="historical App"):
+        await WorkbenchControlClient.get_app_context(
+            binding_id="binding-7",
+            canonical_subject="napi:prod:customer:7:user:9",
+            auth_epoch=1,
+            requested_app_profile_id=11,
+            requested_config_version=3,
+            current_app_profile_id=22,
+            current_config_version=4,
+            purpose="history_read",
+        )
+
+    payload.update(
+        provider_app_mode=4,
+        runtime_profile="claw_dynamic_v2",
+        execution_enabled=False,
+    )
+    context = await WorkbenchControlClient.get_app_context(
+        binding_id="binding-7",
+        canonical_subject="napi:prod:customer:7:user:9",
+        auth_epoch=1,
+        requested_app_profile_id=11,
+        requested_config_version=3,
+        current_app_profile_id=22,
+        current_config_version=4,
+        purpose="history_read",
+    )
+    assert context.execution_enabled is False
+
 @pytest.mark.asyncio
 async def test_app_context_request_is_exact_and_purpose_bound(monkeypatch):
     request = AsyncMock(

@@ -379,7 +379,7 @@ class ChatMessageListApi(HTTPMethodView):
                 try:
                     result = await vendor_app.get_messages_v2(
                         request.ctx.db,
-                        request.ctx.account_id,
+                        request.ctx.workbench_context.canonical_subject,
                         args['ConversationId'],
                         app.config.CHAT_MESSAGE_PAGE_SIZE,
                         args['LastRecordId'],

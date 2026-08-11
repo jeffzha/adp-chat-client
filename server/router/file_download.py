@@ -3,6 +3,7 @@
 通过后端代理从工作空间下载文件，避免前端直接访问 COS 产生跨域问题。
 前端直接使用同域的 /file/download?... URL 即可下载或预览文件。
 """
+import asyncio
 import logging
 from urllib.parse import quote
 
@@ -16,6 +17,7 @@ from router import login_required
 from app_factory import TAgenticApp
 from config import tagentic_config
 from core.workbench_policy import WorkbenchPolicy, WorkbenchPolicyError
+from core.workbench_async_cleanup import bounded_cleanup
 from core.workbench_runtime import WorkbenchRuntimeError, WorkbenchRuntimeGuard
 from core.workbench_stream import WorkbenchStreamGuard
 from core.workbench_workspace import CoreWorkbenchWorkspace, WorkbenchWorkspaceError
@@ -115,13 +117,38 @@ class FileDownloadApi(HTTPMethodView):
                     user_id=request.ctx.workbench_context.canonical_subject,
                     timeout_seconds=max(1, lease.max_runtime_seconds - 1),
                 )
+                encoded_filename = quote(provider_stream.file_name, safe='')
             except WorkbenchRuntimeError as error:
                 await WorkbenchRuntimeGuard.release(lease)
                 raise SanicException(str(error), status_code=error.status_code) from error
+            except asyncio.CancelledError:
+                try:
+                    if provider_stream is not None:
+                        await bounded_cleanup(
+                            provider_stream.close,
+                            timeout_seconds=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
+                        )
+                finally:
+                    await WorkbenchRuntimeGuard.release(lease)
+                raise
             except Exception as error:
-                if provider_stream is not None:
-                    await provider_stream.close()
-                await WorkbenchRuntimeGuard.release(lease)
+                try:
+                    if provider_stream is not None:
+                        closed = await bounded_cleanup(
+                            provider_stream.close,
+                            timeout_seconds=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
+                        )
+                        if not closed:
+                            logging.error(
+                                '[FileDownloadApi] provider setup cleanup outcome is unknown'
+                            )
+                except Exception as close_error:
+                    logging.error(
+                        '[FileDownloadApi] provider setup cleanup failed: error_type=%s',
+                        type(close_error).__name__,
+                    )
+                finally:
+                    await WorkbenchRuntimeGuard.release(lease)
                 logging.error(
                     '[FileDownloadApi] workbench provider download failed: error_type=%s',
                     type(error).__name__,
@@ -130,14 +157,18 @@ class FileDownloadApi(HTTPMethodView):
                     'provider file download failed',
                     status_code=502,
                 ) from error
-            encoded_filename = quote(provider_stream.file_name, safe='')
             stream_claims = dict(request.ctx.session_claims)
             stream_app_context = request.ctx.workbench_app_context
 
             async def streaming_fn(response):
                 try:
+                    try:
+                        provider_chunks = provider_stream.iter_chunks()
+                    except BaseException:
+                        await WorkbenchRuntimeGuard.release(lease)
+                        raise
                     await WorkbenchStreamGuard.pump(
-                        provider_stream.iter_chunks(),
+                        provider_chunks,
                         response.write,
                         claims=stream_claims,
                         method="GET",
@@ -155,7 +186,14 @@ class FileDownloadApi(HTTPMethodView):
                     )
                     raise
                 finally:
-                    await provider_stream.close()
+                    closed = await bounded_cleanup(
+                        provider_stream.close,
+                        timeout_seconds=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
+                    )
+                    if not closed:
+                        logging.error(
+                            '[FileDownloadApi] provider stream cleanup outcome is unknown'
+                        )
 
             return ResponseStream(
                 streaming_fn,

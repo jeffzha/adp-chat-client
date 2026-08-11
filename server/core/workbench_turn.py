@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import tagentic_config
 from core.agent import CoreAgent
 from core.chat import CoreChat
+from core.workbench_async_cleanup import bounded_cleanup
 from core.workbench_control import WorkbenchAppContext, WorkbenchIdentityContext
 from core.workbench_control_events import CACHE_INVALIDATE, SESSION_REVOKE, WorkbenchControlEvent
 from core.workbench_runtime import RuntimeLease, WorkbenchRuntimeGuard
@@ -812,12 +813,14 @@ class WorkbenchTurnManager:
                 type(error).__name__,
             )
         finally:
-            if upstream is not None:
-                try:
-                    await upstream.aclose()
-                except Exception:
-                    pass
-            await WorkbenchRuntimeGuard.release(lease)
+            try:
+                if upstream is not None:
+                    await bounded_cleanup(
+                        upstream.aclose,
+                        timeout_seconds=tagentic_config.WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS,
+                    )
+            finally:
+                await WorkbenchRuntimeGuard.release(lease)
 
     @classmethod
     def schedule(cls, **kwargs: Any) -> asyncio.Task:
